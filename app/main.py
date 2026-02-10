@@ -1,8 +1,8 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException, status
+from typing import Optional
+from fastapi import FastAPI, Depends, HTTPException, status, Response, Cookie
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 
 from . import models, schemas, database, auth_utils
@@ -11,9 +11,9 @@ models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI()
 
+# --- CORS ---
 cors_origins_str = os.getenv("CORS_ORIGINS", "")
 origins = [origin.strip() for origin in cors_origins_str.split(",") if origin]
-
 if not origins:
     origins = ["http://localhost:5173"]
 
@@ -25,12 +25,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+def get_token_from_cookie(access_token: Optional[str] = Cookie(None)):
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    return access_token
 
 # --- ENDPOINTS ---
 
-@app.post("/login", response_model=schemas.Token)
-def login_with_password(creds: schemas.LoginRequest, db: Session = Depends(database.get_db)):
+@app.post("/login")
+def login_with_password(
+    creds: schemas.LoginRequest, 
+    response: Response,
+    db: Session = Depends(database.get_db)
+):
     user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == creds.username).first()
     
     if not user:
@@ -40,10 +51,23 @@ def login_with_password(creds: schemas.LoginRequest, db: Session = Depends(datab
         raise HTTPException(status_code=400, detail="Неверный пароль")
 
     access_token = auth_utils.create_access_token(data={"sub": user.playername})
-    return {"access_token": access_token, "token_type": "bearer"}
+    
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        max_age=3600, # Время жизни токена
+        samesite="lax",
+        secure=False      # Важно: False для http (на локалке), True только для https
+    )
+    return {"message": "Login successful"}
 
-@app.post("/auth/telegram", response_model=schemas.Token)
-def login_telegram(tg_data: schemas.TelegramLoginRequest, db: Session = Depends(database.get_db)):
+@app.post("/auth/telegram")
+def login_telegram(
+    tg_data: schemas.TelegramLoginRequest, 
+    response: Response,
+    db: Session = Depends(database.get_db)
+):
     data_dict = tg_data.model_dump(exclude_none=True)
     
     if not auth_utils.verify_telegram_data(data_dict):
@@ -55,10 +79,28 @@ def login_telegram(tg_data: schemas.TelegramLoginRequest, db: Session = Depends(
         raise HTTPException(status_code=404, detail="Аккаунт не привязан к этому Telegram")
 
     access_token = auth_utils.create_access_token(data={"sub": user.playername})
-    return {"access_token": access_token, "token_type": "bearer"}
+    
+
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        max_age=3600, # Время жизни токена
+        samesite="lax",
+        secure=False      # Важно: False для http (на локалке), True только для https
+    )
+    return {"message": "Login successful"}
+
+@app.post("/logout")
+def logout(response: Response):
+    response.delete_cookie(key="access_token")
+    return {"message": "Logged out"}
 
 @app.get("/me", response_model=schemas.UserResponse)
-def read_users_me(token: str = Depends(oauth2_scheme), db: Session = Depends(database.get_db)):
+def read_users_me(
+    token: str = Depends(get_token_from_cookie),
+    db: Session = Depends(database.get_db)
+):
     try:
         payload = jwt.decode(token, auth_utils.SECRET_KEY, algorithms=[auth_utils.ALGORITHM])
         username: str = payload.get("sub")
