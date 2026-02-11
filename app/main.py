@@ -98,7 +98,7 @@ def logout(response: Response):
 
 @app.get("/me", response_model=schemas.UserResponse)
 def read_users_me(
-    token: str = Depends(get_token_from_cookie),
+    token: str = Depends(get_token_from_cookie), 
     db: Session = Depends(database.get_db)
 ):
     try:
@@ -108,9 +108,19 @@ def read_users_me(
             raise HTTPException(status_code=401, detail="Invalid token")
     except JWTError:
         raise HTTPException(status_code=401, detail="Could not validate credentials")
-    
+
     user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == username).first()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-        
-    return user
+
+    player_data = db.query(models.PlayerData).filter(models.PlayerData.player_name == user.playername).first()
+
+    return {
+        "playername": user.playername,
+        "uuid": user.uuid,
+        "activeTG": user.activeTG,
+        "tg_username": user.username,
+        "admin": user.admin,
+        "clan_name": player_data.clan_name if player_data else None,
+        "last_login": player_data.login_timestamp if player_data else None
+    }

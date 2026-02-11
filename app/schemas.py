@@ -20,7 +20,9 @@ class UserResponse(BaseModel):
     activeTG: bool
     tg_username: Optional[str] = None
     admin: bool
-
+    clan_name: Optional[str] = None
+    last_login: Optional[int] = None
+    
     class Config:
         from_attributes = True
 

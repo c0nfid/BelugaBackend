@@ -17,3 +17,12 @@ class AuthTGUser(Base):
     lastname = Column(String(120), nullable=True)
     currentUUID = Column(Boolean, default=False)
     admin = Column(Boolean, default=False)
+
+class PlayerData(Base):
+    __tablename__ = "player_data"
+    
+    __table_args__ = {"schema": "essential"} 
+
+    player_name = Column(String(120), primary_key=True)
+    login_timestamp = Column(BigInteger, nullable=True)
+    clan_name = Column(String(36), nullable=True)
