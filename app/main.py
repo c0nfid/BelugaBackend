@@ -1,5 +1,6 @@
 import os
 import uuid
+import time
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -11,25 +12,27 @@ from jose import JWTError, jwt
 
 from . import models, schemas, database, auth_utils, bot_auth
 
-
 models.Base.metadata.create_all(bind=database.engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     bot_token = os.getenv("TG_BOT_TOKEN")
     if bot_token:
-        print(f"🤖 Запускаем Telegram бота...")
+        print("Запуск Telegram бота...")
         asyncio.create_task(bot_auth.start_bot_polling(bot_token))
     else:
-        print("⚠️ TG_BOT_TOKEN не найден, бот не запущен.")
+        print("TG_BOT_TOKEN не найден, бот не запущен.")
+
+    print("Запуск очистки старых сессий...")
+    asyncio.create_task(bot_auth.cleanup_task())
+    
     yield
 
 app = FastAPI(lifespan=lifespan)
 
 cors_origins_str = os.getenv("CORS_ORIGINS", "")
 origins = [origin.strip() for origin in cors_origins_str.split(",") if origin]
-if not origins:
-    origins = ["http://localhost:5173", "http://192.168.0.43", "http://192.168.0.43:80"]
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -54,8 +57,10 @@ def login_with_password(
     db: Session = Depends(database.get_db)
 ):
     user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == creds.username).first()
+    
     if not user:
         raise HTTPException(status_code=400, detail="Пользователь не найден")
+    
     if not auth_utils.verify_password(creds.password, user.password):
         raise HTTPException(status_code=400, detail="Неверный пароль")
 
@@ -67,7 +72,7 @@ def login_with_password(
         httponly=True,
         max_age=3600,
         samesite="lax",
-        secure=False 
+        secure=False
     )
     return {"message": "Login successful"}
 
@@ -84,13 +89,15 @@ def read_users_me(
     try:
         payload = jwt.decode(token, auth_utils.SECRET_KEY, algorithms=[auth_utils.ALGORITHM])
         username: str = payload.get("sub")
+        if not username:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
     
     user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == username).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     player_data = db.query(models.PlayerData).filter(models.PlayerData.player_name == user.playername).first()
 
     return {
@@ -103,11 +110,15 @@ def read_users_me(
         "last_login": player_data.login_timestamp if player_data else None
     }
 
+# ================= TELEGRAM DEEP LINK AUTH =================
 @app.get("/auth/generate-link")
 def generate_tg_link():
-    """Генерирует уникальную ссылку для входа через бота"""
     code = str(uuid.uuid4())
-    bot_auth.login_attempts[code] = {"status": "pending"}
+
+    bot_auth.login_attempts[code] = {
+        "status": "pending",
+        "created_at": time.time()
+    }
     
     bot_name = os.getenv("TG_BOT_NAME", "BelugaEmpireBot")
     
@@ -122,23 +133,27 @@ def check_tg_link(
     response: Response,
     db: Session = Depends(database.get_db)
 ):
-    """Фронтенд опрашивает этот метод, пока статус не станет 'ready'"""
     code = body.get("code")
+    
     if not code or code not in bot_auth.login_attempts:
         raise HTTPException(status_code=404, detail="Код устарел или не найден")
         
     attempt = bot_auth.login_attempts[code]
     
+    if time.time() - attempt.get("created_at", 0) > bot_auth.CODE_TTL:
+        del bot_auth.login_attempts[code]
+        raise HTTPException(status_code=404, detail="Код истек")
+
     if attempt["status"] == "pending":
         return {"status": "pending"}
-        
+
     if attempt["status"] == "ready":
-        tg_id = attempt["tg_id"]
-        user = db.query(models.AuthTGUser).filter(models.AuthTGUser.chatid == tg_id).first()
+        playername = attempt.get("playername")
         
+        user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == playername).first()
         if not user:
             del bot_auth.login_attempts[code]
-            raise HTTPException(status_code=404, detail="Этот Telegram не привязан к аккаунту")
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
             
         access_token = auth_utils.create_access_token(data={"sub": user.playername})
         
@@ -148,9 +163,9 @@ def check_tg_link(
             httponly=True,
             max_age=3600,
             samesite="lax",
-            secure=False 
+            secure=False
         )
-
+        
         del bot_auth.login_attempts[code]
         
         return {"status": "success"}
