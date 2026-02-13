@@ -107,7 +107,8 @@ def read_users_me(
         "tg_username": user.username,
         "admin": user.admin,
         "clan_name": player_data.clan_name if player_data else None,
-        "last_login": player_data.login_timestamp if player_data else None
+        "last_login": player_data.login_timestamp if player_data else None,
+        "primary_group": player_data.primary_group if (player_data and player_data.primary_group) else "default"
     }
 
 # ================= TELEGRAM DEEP LINK AUTH =================
