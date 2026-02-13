@@ -50,6 +50,23 @@ def get_token_from_cookie(access_token: Optional[str] = Cookie(None)):
         )
     return access_token
 
+def get_current_user_orm(
+    token: str = Depends(get_token_from_cookie),
+    db: Session = Depends(database.get_db)
+):
+    try:
+        payload = jwt.decode(token, auth_utils.SECRET_KEY, algorithms=[auth_utils.ALGORITHM])
+        username: str = payload.get("sub")
+        if not username:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
 @app.post("/login")
 def login_with_password(
     creds: schemas.LoginRequest, 
@@ -80,6 +97,25 @@ def login_with_password(
 def logout(response: Response):
     response.delete_cookie(key="access_token")
     return {"message": "Logged out"}
+
+@app.post("/auth/change-password")
+def change_password(
+    body: schemas.ChangePasswordRequest,
+    user: models.AuthTGUser = Depends(get_current_user_orm),
+    db: Session = Depends(database.get_db)
+):
+
+    if not user.password:
+         pass 
+
+    if not auth_utils.verify_password(body.current_password, user.password):
+        raise HTTPException(status_code=400, detail="Текущий пароль указан неверно")
+
+    user.password = auth_utils.get_password_hash(body.new_password)
+    db.commit()
+
+    return {"message": "Пароль успешно изменен"}
+
 
 @app.get("/me", response_model=schemas.UserResponse)
 def read_users_me(
