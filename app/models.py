@@ -26,5 +26,5 @@ class PlayerData(Base):
     player_name = Column(String(120), primary_key=True)
     login_timestamp = Column(BigInteger, nullable=True)
     clan_name = Column(String(36), nullable=True)
-
     primary_group = Column(String(64), nullable=True, default="default")
+    donation_balance = Column(BigInteger, nullable=True, default=0)

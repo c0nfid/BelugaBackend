@@ -23,6 +23,7 @@ class UserResponse(BaseModel):
     clan_name: Optional[str] = None
     last_login: Optional[int] = None
     primary_group: Optional[str] = "default"
+    donation_balance: Optional[int] = 0
     
     class Config:
         from_attributes = True
