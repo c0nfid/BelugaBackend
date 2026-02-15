@@ -33,5 +33,5 @@ class Token(BaseModel):
     token_type: str
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
     new_password: str
+    current_password: Optional[str] = None
