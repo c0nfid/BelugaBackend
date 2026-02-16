@@ -21,7 +21,8 @@ class UserResponse(BaseModel):
     tg_username: Optional[str] = None
     admin: bool
     clan_name: Optional[str] = None
-    last_login: Optional[int] = None
+    last_seen: Optional[int] = None
+    playtime_seconds: Optional[int] = 0
     primary_group: Optional[str] = "default"
     donation_balance: Optional[int] = 0
     

@@ -79,8 +79,6 @@ def get_current_user_orm(token: str = Depends(get_token_from_cookie), db: Sessio
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
-# --- AUTH ENDPOINTS ---
-
 @app.post("/login")
 def login_with_password(creds: schemas.LoginRequest, response: Response, db: Session = Depends(database.get_db)):
     user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == creds.username).first()
@@ -101,6 +99,7 @@ def logout(response: Response):
 @app.get("/me", response_model=schemas.UserResponse)
 def read_users_me(user: models.AuthTGUser = Depends(get_current_user_orm), db: Session = Depends(database.get_db)):
     player_data = db.query(models.PlayerData).filter(models.PlayerData.player_name == user.playername).first()
+    playtime_data = db.query(models.PlayerPlaytime).filter(models.PlayerPlaytime.player_name == user.playername).first()
     return {
         "playername": user.playername,
         "uuid": user.uuid,
@@ -108,12 +107,11 @@ def read_users_me(user: models.AuthTGUser = Depends(get_current_user_orm), db: S
         "tg_username": user.username,
         "admin": user.admin,
         "clan_name": player_data.clan_name if player_data else None,
-        "last_login": player_data.login_timestamp if player_data else None,
+        "last_seen": player_data.logout_timestamp if player_data else None,
         "primary_group": player_data.primary_group if (player_data and player_data.primary_group) else "default",
-        "donation_balance": player_data.donation_balance if player_data else 0
+        "donation_balance": player_data.donation_balance if player_data else 0,
+        "playtime_seconds": playtime_data.total_seconds if playtime_data else 0
     }
-
-# --- 2FA & SECURITY ACTIONS ---
 
 @app.post("/auth/change-password")
 async def change_password(
@@ -121,10 +119,8 @@ async def change_password(
     user: models.AuthTGUser = Depends(get_current_user_orm),
     db: Session = Depends(database.get_db)
 ):
-    # Убеждаемся, что объект user привязан к текущей сессии db
     db.add(user)
 
-    # Сценарий 1: Есть Telegram (2FA)
     if user.activeTG and user.chatid:
         from aiogram import Bot
         bot = Bot(token=os.getenv("TG_BOT_TOKEN"))
@@ -139,16 +135,13 @@ async def change_password(
             
         return {"status": "confirmation_required", "request_id": request_id}
 
-    # Сценарий 2: Нет Telegram (Требуется старый пароль)
     else:
         if not body.current_password:
             raise HTTPException(status_code=400, detail="Введите текущий пароль")
         
-        # Проверяем старый пароль. Если verify_password вернул False, выбрасываем ошибку.
         if not auth_utils.verify_password(body.current_password, user.password):
             raise HTTPException(status_code=400, detail="Неверный текущий пароль")
 
-        # Хешируем новый и сохраняем
         user.password = auth_utils.get_password_hash(body.new_password)
         db.commit()
         return {"status": "success", "message": "Пароль изменен"}
