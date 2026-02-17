@@ -3,6 +3,7 @@ import uuid
 import time
 import asyncio
 import secrets
+import requests
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -79,6 +80,16 @@ def get_current_user_orm(token: str = Depends(get_token_from_cookie), db: Sessio
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
+online_cache = {
+    "count": 0,
+    "last_updated": 0
+}
+
+CACHE_TTL = 300  # 5 минут в секундах
+
+PH_HOST = os.getenv("PLACEHOLDER_API_HOST")
+PH_PORT = os.getenv("PLACEHOLDER_API_PORT")
+
 @app.post("/login")
 def login_with_password(creds: schemas.LoginRequest, response: Response, db: Session = Depends(database.get_db)):
     user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == creds.username).first()
@@ -112,6 +123,39 @@ def read_users_me(user: models.AuthTGUser = Depends(get_current_user_orm), db: S
         "donation_balance": player_data.donation_balance if player_data else 0,
         "playtime_seconds": playtime_data.total_seconds if playtime_data else 0
     }
+
+@app.get("/server/online")
+def get_server_online():
+    global online_cache
+    current_time = time.time()
+    
+    ph_host = os.getenv("PLACEHOLDER_API_HOST")
+    ph_port = os.getenv("PLACEHOLDER_API_PORT")
+
+    if current_time - online_cache["last_updated"] > CACHE_TTL:
+        try:
+            placeholder_online = "server_online"
+            url = f"http://{ph_host}:{ph_port}/--null/{placeholder_online}"
+            
+            response = requests.get(url, timeout=2.0)
+            
+            if response.status_code == 200:
+                data = response.json()
+                print(data)
+                if data.get("ok"):
+                    val_str = data.get("value", "0")
+                    online_cache["count"] = int(float(val_str))
+                    online_cache["last_updated"] = current_time
+                    print(f"Online updated: {online_cache['count']}")
+                else:
+                    print(f"Placeholder API error: {data}")
+            else:
+                print(f"Placeholder API status code: {response.status_code}")
+
+        except Exception as e:
+            print(f"Failed to fetch online: {e}")
+    
+    return {"online": online_cache["count"]}
 
 @app.post("/auth/change-password")
 async def change_password(
