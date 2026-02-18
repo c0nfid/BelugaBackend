@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 
 class LoginRequest(BaseModel):
     username: str
@@ -36,3 +36,35 @@ class Token(BaseModel):
 class ChangePasswordRequest(BaseModel):
     new_password: str
     current_password: Optional[str] = None
+
+class ClanRankingItem(BaseModel):
+    rank: int
+    name: str
+    leader: str
+    members: int
+    rating: int
+    wins: int
+
+    class Config:
+        from_attributes = True
+
+class ClanMemberSchema(BaseModel):
+    name: str
+    role: str # LEADER, ELDER, MEMBER
+    joined_date: str = "N/A" # В базе нет даты вступления, ставим заглушку
+
+class ClanStatsSchema(BaseModel):
+    wins: int
+    losses: int
+
+class ClanDetailsResponse(BaseModel):
+    name: str
+    description: Optional[str]
+    leader: str
+    rank_position: int # Место в топе
+    rating: int # Округленный final_rating
+    rank_title: str # Поле clan_rank из таблицы clan_data
+    balance: int # Округленный balance
+    activity_points: int
+    stats: ClanStatsSchema
+    members: List[ClanMemberSchema]

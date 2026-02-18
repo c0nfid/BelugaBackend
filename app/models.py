@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, BigInteger
+from sqlalchemy import Column, Integer, String, Boolean, BigInteger, Float, Numeric, Text, ForeignKey, or_
 from .database import Base
 
 class AuthTGUser(Base):
@@ -36,3 +36,41 @@ class PlayerPlaytime(Base):
 
     player_name = Column(String(120), primary_key=True) 
     total_seconds = Column(BigInteger, default=0)
+
+class ClanData(Base):
+    __tablename__ = "clan_data"
+    __table_args__ = {"schema": "essential"}
+
+    clan_name = Column(String(12), primary_key=True)
+    leader = Column(String(36))
+    member_count = Column(Integer, default=1)
+
+    balance = Column(Numeric(18, 2), default=0) # Decimal
+    clan_description = Column(Text, nullable=True)
+    clan_rank = Column(String(16), default="Новичок") # Ранг (название)
+
+class ClanRating(Base):
+    __tablename__ = "clan_rating"
+    __table_args__ = {"schema": "essential"}
+
+    clan_name = Column(String(12), primary_key=True)
+    final_rating = Column(Float, default=0.0)
+    activity_score = Column(Integer, default=0)
+
+class ClanWars(Base):
+    __tablename__ = "clan_wars"
+    __table_args__ = {"schema": "essential"}
+
+    war_id = Column(String(36), primary_key=True)
+    clan_a = Column(String(12)) # Атакующий
+    clan_b = Column(String(12)) # Защищающийся
+    winner_clan = Column(String(12))
+
+class ClanHeads(Base): # Участники
+    __tablename__ = "clan_heads"
+    __table_args__ = {"schema": "essential"}
+
+    # Предполагаем, что player_name уникален, используем как PK
+    player_name = Column(String(36), primary_key=True) 
+    clan_name = Column(String(12), index=True)
+    role = Column(Integer, default=0) # 0=Member, 1=Admin, 2=Leader

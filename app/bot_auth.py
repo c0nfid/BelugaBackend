@@ -12,10 +12,8 @@ from . import database, models, auth_utils
 
 CODE_TTL = 300
 
-# Хранилище кодов входа
 login_attempts: Dict[str, dict] = {}
 
-# Хранилище подтверждений
 pending_confirmations: Dict[str, dict] = {}
 
 async def cleanup_task():
@@ -78,7 +76,6 @@ async def register_handlers(dp: Dispatcher):
 
         req = pending_confirmations[request_id]
         
-        # Используем контекстный менеджер для надежности
         with database.SessionLocal() as db:
             user = db.query(models.AuthTGUser).filter(models.AuthTGUser.chatid == req["chat_id"]).first()
             
@@ -94,17 +91,16 @@ async def register_handlers(dp: Dispatcher):
                 user.username = None
                 user.firstname = None
                 user.twofactor = 0
-                db.add(user) # Явное добавление
+                db.add(user)
                 db.commit()
                 msg = "❌ Telegram успешно отвязан."
             
             elif action_code == "confirm_pass":
                 new_pass = req["data"].get("new_password")
                 if new_pass:
-                    # Хешируем и сохраняем
                     hashed_password = auth_utils.get_password_hash(new_pass)
                     user.password = hashed_password
-                    db.add(user) # Явное добавление для фиксации изменений
+                    db.add(user)
                     db.commit()
                     print(f"Password changed via Telegram for user {user.playername}")
                     msg = "🔑 Пароль успешно изменен."
@@ -137,7 +133,7 @@ async def start_bot_polling(token: str):
             users = db.query(models.AuthTGUser).filter(models.AuthTGUser.chatid == tg_id).all()
 
         if not users:
-            await message.answer("⛔ Нет привязанных аккаунтов. Используйте @BelugaVerification_bot")
+            await message.answer("⛔ К вашему Telegram не привязан ни один игровой аккаунт.\nПерейдите в бота @BelugaVerification_bot и выполните привязку!")
             return
 
         if len(users) == 1:

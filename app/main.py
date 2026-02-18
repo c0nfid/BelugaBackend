@@ -13,6 +13,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy.orm import Session
+from sqlalchemy import func, desc, cast, Integer, or_
 from jose import JWTError, jwt
 
 from . import models, schemas, database, auth_utils, bot_auth
@@ -246,3 +247,116 @@ def check_tg_link(body: dict, response: Response, db: Session = Depends(database
         return {"status": "success"}
 
     return {"status": "pending"}
+
+# ... imports ...
+
+@app.get("/clans/top", response_model=list[schemas.ClanRankingItem])
+def get_top_clans(db: Session = Depends(database.get_db)):
+
+    # SELECT 
+    #   cd.clan_name, cd.leader, cd.member_count, 
+    #   COALESCE(cr.pvp_elo, 0) as rating,
+    #   COUNT(cw.winner_clan) as wins
+    # FROM clan_data cd
+    # LEFT JOIN clan_rating cr ON cd.clan_name = cr.clan_name
+    # LEFT JOIN clan_wars cw ON cd.clan_name = cw.winner_clan
+    # GROUP BY cd.clan_name
+    # ORDER BY rating DESC, wins DESC
+    # LIMIT 10
+    
+    rating_calc = cast(
+        func.round(func.coalesce(models.ClanRating.final_rating, 0)), 
+        Integer
+    )
+
+    results = db.query(
+        models.ClanData.clan_name,
+        models.ClanData.leader,
+        models.ClanData.member_count,
+        rating_calc.label("rating"),
+        func.count(models.ClanWars.winner_clan).label("wins")
+    ).outerjoin(
+        models.ClanRating, models.ClanData.clan_name == models.ClanRating.clan_name
+    ).outerjoin(
+        models.ClanWars, models.ClanData.clan_name == models.ClanWars.winner_clan
+    ).group_by(
+        models.ClanData.clan_name
+    ).order_by(
+        desc("rating"), desc("wins")
+    ).limit(10).all()
+
+    response = []
+    for idx, row in enumerate(results):
+        response.append({
+            "rank": idx + 1,
+            "name": row.clan_name,
+            "leader": row.leader,
+            "members": row.member_count,
+            "rating": row.rating,
+            "wins": row.wins
+        })
+        
+    return response
+    
+@app.get("/clans/{clan_name}", response_model=schemas.ClanDetailsResponse)
+def get_clan_details(clan_name: str, db: Session = Depends(database.get_db)):
+    # 1. Получаем основные данные
+    clan_data = db.query(models.ClanData).filter(models.ClanData.clan_name == clan_name).first()
+    if not clan_data:
+        raise HTTPException(status_code=404, detail="Клан не найден")
+
+    # 2. Получаем рейтинг (Elo)
+    rating_row = db.query(models.ClanRating).filter(models.ClanRating.clan_name == clan_name).first()
+    current_rating = int(rating_row.final_rating) if rating_row else 0
+
+    # 3. Получаем очки активности
+    activity_row = db.query(models.ClanRating).filter(models.ClanRating.clan_name == clan_name).first()
+    activity_points = activity_row.activity_score if activity_row else 0
+
+    # 4. Считаем позицию в топе (Сколько кланов имеют рейтинг выше нашего?)
+    # Тот же запрос, что в топе, но count
+    rank_position = db.query(models.ClanRating).filter(models.ClanRating.final_rating > (rating_row.final_rating if rating_row else 0)).count() + 1
+
+    # 5. Считаем Победы (Wins)
+    wins_count = db.query(models.ClanWars).filter(models.ClanWars.winner_clan == clan_name).count()
+
+    # 6. Считаем Поражения (Losses)
+    # Клан участвовал (был A или B), но победитель НЕ он
+    losses_count = db.query(models.ClanWars).filter(
+        or_(models.ClanWars.clan_a == clan_name, models.ClanWars.clan_b == clan_name),
+        models.ClanWars.winner_clan != clan_name
+    ).count()
+
+    # 7. Получаем участников и мапим роли
+    members_rows = db.query(models.ClanHeads).filter(models.ClanHeads.clan_name == clan_name).all()
+    members_list = []
+    
+    role_map = {0: "MEMBER", 1: "ADMIN", 2: "LEADER"}
+
+    for m in members_rows:
+        # Если роль вдруг придет странная, будет MEMBER
+        role_str = role_map.get(m.role, "MEMBER") 
+        members_list.append({
+            "name": m.player_name,
+            "role": role_str,
+            "joined_date": "Давно" # Заглушка, т.к. в базе нет поля даты
+        })
+
+    # Сортируем участников: Сначала Лидер, потом Админы, потом Игроки
+    members_list.sort(key=lambda x: {"LEADER": 0, "ADMIN": 1, "MEMBER": 2}[x["role"]])
+
+    return {
+        "name": clan_data.clan_name,
+        "description": clan_data.clan_description or "Описание отсутствует",
+        "leader": clan_data.leader,
+        "rank_position": rank_position,
+        "rating": current_rating,
+        "rank_title": clan_data.clan_rank or "Новичок",
+        "balance": int(clan_data.balance) if clan_data.balance else 0, # Округляем до целого
+        "activity_points": activity_points,
+        "stats": {
+            "wins": wins_count,
+            "losses": losses_count
+        },
+        "members": members_list
+    }
