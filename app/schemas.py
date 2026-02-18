@@ -25,6 +25,10 @@ class UserResponse(BaseModel):
     playtime_seconds: Optional[int] = 0
     primary_group: Optional[str] = "default"
     donation_balance: Optional[int] = 0
+
+    last_login_timestamp: Optional[int] = 0
+    last_ip: Optional[str] = "Неизвестно"
+    session_duration: Optional[int] = 0
     
     class Config:
         from_attributes = True
@@ -61,10 +65,10 @@ class ClanDetailsResponse(BaseModel):
     name: str
     description: Optional[str]
     leader: str
-    rank_position: int # Место в топе
-    rating: int # Округленный final_rating
-    rank_title: str # Поле clan_rank из таблицы clan_data
-    balance: int # Округленный balance
+    rank_position: int
+    rating: int
+    rank_title: str
+    balance: int
     activity_points: int
     stats: ClanStatsSchema
     members: List[ClanMemberSchema]

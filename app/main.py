@@ -112,6 +112,21 @@ def logout(response: Response):
 def read_users_me(user: models.AuthTGUser = Depends(get_current_user_orm), db: Session = Depends(database.get_db)):
     player_data = db.query(models.PlayerData).filter(models.PlayerData.player_name == user.playername).first()
     playtime_data = db.query(models.PlayerPlaytime).filter(models.PlayerPlaytime.player_name == user.playername).first()
+    
+    current_time_ms = int(time.time() * 1000)
+    login_ts = player_data.login_timestamp if (player_data and player_data.login_timestamp) else 0
+    logout_ts = player_data.logout_timestamp if (player_data and player_data.logout_timestamp) else 0
+
+    session_duration = 0
+    
+    if login_ts > 0:
+        if login_ts > logout_ts:
+            session_duration = (current_time_ms - login_ts) // 1000
+        else:
+            session_duration = (logout_ts - login_ts) // 1000
+    
+    if session_duration < 0: session_duration = 0
+
     return {
         "playername": user.playername,
         "uuid": user.uuid,
@@ -122,7 +137,10 @@ def read_users_me(user: models.AuthTGUser = Depends(get_current_user_orm), db: S
         "last_seen": player_data.logout_timestamp if player_data else None,
         "primary_group": player_data.primary_group if (player_data and player_data.primary_group) else "default",
         "donation_balance": player_data.donation_balance if player_data else 0,
-        "playtime_seconds": playtime_data.total_seconds if playtime_data else 0
+        "playtime_seconds": playtime_data.total_seconds if playtime_data else 0,
+        "last_login_timestamp": login_ts,
+        "last_ip": player_data.ip_address if (player_data and player_data.ip_address) else "Неизвестно",
+        "session_duration": session_duration
     }
 
 @app.get("/server/online")
@@ -300,41 +318,31 @@ def get_top_clans(db: Session = Depends(database.get_db)):
     
 @app.get("/clans/{clan_name}", response_model=schemas.ClanDetailsResponse)
 def get_clan_details(clan_name: str, db: Session = Depends(database.get_db)):
-    # 1. Получаем основные данные
     clan_data = db.query(models.ClanData).filter(models.ClanData.clan_name == clan_name).first()
     if not clan_data:
         raise HTTPException(status_code=404, detail="Клан не найден")
 
-    # 2. Получаем рейтинг (Elo)
     rating_row = db.query(models.ClanRating).filter(models.ClanRating.clan_name == clan_name).first()
     current_rating = int(rating_row.final_rating) if rating_row else 0
 
-    # 3. Получаем очки активности
     activity_row = db.query(models.ClanRating).filter(models.ClanRating.clan_name == clan_name).first()
     activity_points = activity_row.activity_score if activity_row else 0
 
-    # 4. Считаем позицию в топе (Сколько кланов имеют рейтинг выше нашего?)
-    # Тот же запрос, что в топе, но count
     rank_position = db.query(models.ClanRating).filter(models.ClanRating.final_rating > (rating_row.final_rating if rating_row else 0)).count() + 1
 
-    # 5. Считаем Победы (Wins)
     wins_count = db.query(models.ClanWars).filter(models.ClanWars.winner_clan == clan_name).count()
 
-    # 6. Считаем Поражения (Losses)
-    # Клан участвовал (был A или B), но победитель НЕ он
     losses_count = db.query(models.ClanWars).filter(
         or_(models.ClanWars.clan_a == clan_name, models.ClanWars.clan_b == clan_name),
         models.ClanWars.winner_clan != clan_name
     ).count()
 
-    # 7. Получаем участников и мапим роли
     members_rows = db.query(models.ClanHeads).filter(models.ClanHeads.clan_name == clan_name).all()
     members_list = []
     
     role_map = {0: "MEMBER", 1: "ADMIN", 2: "LEADER"}
 
     for m in members_rows:
-        # Если роль вдруг придет странная, будет MEMBER
         role_str = role_map.get(m.role, "MEMBER") 
         members_list.append({
             "name": m.player_name,
@@ -342,7 +350,6 @@ def get_clan_details(clan_name: str, db: Session = Depends(database.get_db)):
             "joined_date": "Давно" # Заглушка, т.к. в базе нет поля даты
         })
 
-    # Сортируем участников: Сначала Лидер, потом Админы, потом Игроки
     members_list.sort(key=lambda x: {"LEADER": 0, "ADMIN": 1, "MEMBER": 2}[x["role"]])
 
     return {

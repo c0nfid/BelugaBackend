@@ -26,6 +26,7 @@ class PlayerData(Base):
     player_name = Column(String(120), primary_key=True)
     login_timestamp = Column(BigInteger, nullable=True)
     logout_timestamp = Column(BigInteger, nullable=True)
+    ip_address = Column(String(45), nullable=True)
     clan_name = Column(String(36), nullable=True)
     primary_group = Column(String(64), nullable=True, default="default")
     donation_balance = Column(BigInteger, nullable=True, default=0)
@@ -45,9 +46,9 @@ class ClanData(Base):
     leader = Column(String(36))
     member_count = Column(Integer, default=1)
 
-    balance = Column(Numeric(18, 2), default=0) # Decimal
+    balance = Column(Numeric(18, 2), default=0)
     clan_description = Column(Text, nullable=True)
-    clan_rank = Column(String(16), default="Новичок") # Ранг (название)
+    clan_rank = Column(String(16), default="Новичок")
 
 class ClanRating(Base):
     __tablename__ = "clan_rating"
@@ -66,11 +67,10 @@ class ClanWars(Base):
     clan_b = Column(String(12)) # Защищающийся
     winner_clan = Column(String(12))
 
-class ClanHeads(Base): # Участники
+class ClanHeads(Base):
     __tablename__ = "clan_heads"
     __table_args__ = {"schema": "essential"}
 
-    # Предполагаем, что player_name уникален, используем как PK
     player_name = Column(String(36), primary_key=True) 
     clan_name = Column(String(12), index=True)
     role = Column(Integer, default=0) # 0=Member, 1=Admin, 2=Leader
