@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, BigInteger, Float, Numeric, Text, ForeignKey, or_
+from sqlalchemy import Column, Integer, String, Boolean, BigInteger, Float, Numeric, Text, ForeignKey, or_, Date, func
 from .database import Base
 
 class AuthTGUser(Base):
@@ -30,6 +30,7 @@ class PlayerData(Base):
     clan_name = Column(String(36), nullable=True)
     primary_group = Column(String(64), nullable=True, default="default")
     donation_balance = Column(BigInteger, nullable=True, default=0)
+    balance = Column(Numeric(18, 2), default=0)
 
 class PlayerPlaytime(Base):
     __tablename__ = "player_playtime"
@@ -74,3 +75,21 @@ class ClanHeads(Base):
     player_name = Column(String(36), primary_key=True) 
     clan_name = Column(String(12), index=True)
     role = Column(Integer, default=0) # 0=Member, 1=Admin, 2=Leader
+
+class KDAData(Base):
+    __tablename__ = "KDA_data"
+    __table_args__ = {"schema": "essential"}
+
+    player_name = Column(String(36), primary_key=True)
+    player_kill = Column(Integer, default=0)
+    player_death = Column(Integer, default=0)
+
+class PlayerPvpDaily(Base):
+    __tablename__ = "player_pvp_daily"
+    __table_args__ = {"schema": "essential"}
+
+    day = Column(Date, primary_key=True)
+    player_name = Column(String(36), primary_key=True)
+    
+    valid_kills = Column(Integer, default=0)
+    valid_deaths = Column(Integer, default=0)

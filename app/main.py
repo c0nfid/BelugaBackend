@@ -113,6 +113,13 @@ def read_users_me(user: models.AuthTGUser = Depends(get_current_user_orm), db: S
     player_data = db.query(models.PlayerData).filter(models.PlayerData.player_name == user.playername).first()
     playtime_data = db.query(models.PlayerPlaytime).filter(models.PlayerPlaytime.player_name == user.playername).first()
     
+    kda_data = db.query(models.KDAData).filter(models.KDAData.player_name == user.playername).first()
+    
+    legit_stats = db.query(
+        func.sum(models.PlayerPvpDaily.valid_kills).label("total_valid_kills"),
+        func.sum(models.PlayerPvpDaily.valid_deaths).label("total_valid_deaths")
+    ).filter(models.PlayerPvpDaily.player_name == user.playername).first()
+
     current_time_ms = int(time.time() * 1000)
     login_ts = player_data.login_timestamp if (player_data and player_data.login_timestamp) else 0
     logout_ts = player_data.logout_timestamp if (player_data and player_data.logout_timestamp) else 0
@@ -136,7 +143,15 @@ def read_users_me(user: models.AuthTGUser = Depends(get_current_user_orm), db: S
         "clan_name": player_data.clan_name if player_data else None,
         "last_seen": player_data.logout_timestamp if player_data else None,
         "primary_group": player_data.primary_group if (player_data and player_data.primary_group) else "default",
+        
         "donation_balance": player_data.donation_balance if player_data else 0,
+        "balance": float(player_data.balance) if (player_data and player_data.balance) else 0.0,
+                
+        "kills": kda_data.player_kill if kda_data else 0,
+        "deaths": kda_data.player_death if kda_data else 0,
+        "legit_kills": legit_stats.total_valid_kills if legit_stats.total_valid_kills else 0,
+        "legit_deaths": legit_stats.total_valid_deaths if legit_stats.total_valid_deaths else 0,
+
         "playtime_seconds": playtime_data.total_seconds if playtime_data else 0,
         "last_login_timestamp": login_ts,
         "last_ip": player_data.ip_address if (player_data and player_data.ip_address) else "Неизвестно",

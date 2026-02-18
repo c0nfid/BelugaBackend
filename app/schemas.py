@@ -24,7 +24,14 @@ class UserResponse(BaseModel):
     last_seen: Optional[int] = None
     playtime_seconds: Optional[int] = 0
     primary_group: Optional[str] = "default"
+
     donation_balance: Optional[int] = 0
+    balance: Optional[float] = 0
+
+    kills: Optional[int] = 0
+    deaths: Optional[int] = 0
+    legit_kills: Optional[int] = 0
+    legit_deaths: Optional[int] = 0
 
     last_login_timestamp: Optional[int] = 0
     last_ip: Optional[str] = "Неизвестно"
