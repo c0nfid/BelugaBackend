@@ -7,7 +7,7 @@ import requests
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, status, Response, Cookie
+from fastapi import FastAPI, Depends, HTTPException, status, Response, Cookie, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -284,7 +284,8 @@ def check_tg_link(body: dict, response: Response, db: Session = Depends(database
 # ... imports ...
 
 @app.get("/clans/top", response_model=list[schemas.ClanRankingItem])
-def get_top_clans(db: Session = Depends(database.get_db)):
+def get_top_clans(all: bool = Query(False, description="Вернуть все кланы вместо ТОП-10"),
+    db: Session = Depends(database.get_db)):
 
     # SELECT 
     #   cd.clan_name, cd.leader, cd.member_count, 
@@ -316,7 +317,12 @@ def get_top_clans(db: Session = Depends(database.get_db)):
         models.ClanData.clan_name
     ).order_by(
         desc("rating"), desc("wins")
-    ).limit(10).all()
+    )
+
+    if not all:
+        results = results.limit(10)
+    
+    results = results.all()
 
     response = []
     for idx, row in enumerate(results):
