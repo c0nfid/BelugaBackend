@@ -93,3 +93,21 @@ class PlayerPvpDaily(Base):
     
     valid_kills = Column(Integer, default=0)
     valid_deaths = Column(Integer, default=0)
+
+class Enchantment(Base):
+    __tablename__ = "enchantments"
+    __table_args__ = {"schema": "belugadb"}
+
+    name = Column(String(100), primary_key=True)
+    display = Column(String(255), nullable=True)
+    description = Column(Text, nullable=True)
+    ench_group = Column(String(100), nullable=True)
+    max_level = Column(Integer, nullable=True)
+
+class EnchantmentItem(Base):
+    __tablename__ = "enchantment_items"
+    __table_args__ = {"schema": "belugadb"}
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ench_name = Column(String(100), ForeignKey("belugadb.enchantments.name", ondelete="CASCADE"))
+    item = Column(String(100), nullable=True)

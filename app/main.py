@@ -17,6 +17,7 @@ from sqlalchemy import func, desc, cast, Integer, or_
 from jose import JWTError, jwt
 
 from . import models, schemas, database, auth_utils, bot_auth
+from routers import wiki
 
 models.Base.metadata.create_all(bind=database.engine)
 
@@ -35,6 +36,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 security = HTTPBasic()
+
+app.include_router(wiki.router)
 
 def get_current_username_docs(credentials: HTTPBasicCredentials = Depends(security)):
     correct_user = secrets.compare_digest(credentials.username, os.getenv("SWAGGER_USER", "admin"))
