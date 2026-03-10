@@ -14,10 +14,9 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, cast, Integer, or_
-from jose import JWTError, jwt
 
 from . import models, schemas, database, auth_utils, bot_auth
-from routers import wiki
+from routers import wiki, email_auth
 
 models.Base.metadata.create_all(bind=database.engine)
 
@@ -38,6 +37,7 @@ app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
 security = HTTPBasic()
 
 app.include_router(wiki.router)
+app.include_router(email_auth.router)
 
 def get_current_username_docs(credentials: HTTPBasicCredentials = Depends(security)):
     correct_user = secrets.compare_digest(credentials.username, os.getenv("SWAGGER_USER", "admin"))
@@ -64,25 +64,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-def get_token_from_cookie(access_token: Optional[str] = Cookie(None)):
-    if not access_token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return access_token
-
-def get_current_user_orm(token: str = Depends(get_token_from_cookie), db: Session = Depends(database.get_db)):
-    try:
-        payload = jwt.decode(token, auth_utils.SECRET_KEY, algorithms=[auth_utils.ALGORITHM])
-        username: str = payload.get("sub")
-        if not username:
-            raise HTTPException(status_code=401, detail="Invalid token payload")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    
-    user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
 
 online_cache = {
     "count": 0,
@@ -112,7 +93,7 @@ def logout(response: Response):
     return {"message": "Logged out"}
 
 @app.get("/me", response_model=schemas.UserResponse)
-def read_users_me(user: models.AuthTGUser = Depends(get_current_user_orm), db: Session = Depends(database.get_db)):
+def read_users_me(user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm), db: Session = Depends(database.get_db)):
     player_data = db.query(models.PlayerData).filter(models.PlayerData.player_name == user.playername).first()
     playtime_data = db.query(models.PlayerPlaytime).filter(models.PlayerPlaytime.player_name == user.playername).first()
     
@@ -122,6 +103,8 @@ def read_users_me(user: models.AuthTGUser = Depends(get_current_user_orm), db: S
         func.sum(models.PlayerPvpDaily.valid_kills).label("total_valid_kills"),
         func.sum(models.PlayerPvpDaily.valid_deaths).label("total_valid_deaths")
     ).filter(models.PlayerPvpDaily.player_name == user.playername).first()
+
+    user_email_data = db.query(models.UserEmail).filter(models.UserEmail.nickname == user.playername).first()
 
     current_time_ms = int(time.time() * 1000)
     login_ts = player_data.login_timestamp if (player_data and player_data.login_timestamp) else 0
@@ -158,7 +141,10 @@ def read_users_me(user: models.AuthTGUser = Depends(get_current_user_orm), db: S
         "playtime_seconds": playtime_data.total_seconds if playtime_data else 0,
         "last_login_timestamp": login_ts,
         "last_ip": player_data.ip_address if (player_data and player_data.ip_address) else "Неизвестно",
-        "session_duration": session_duration
+        "session_duration": session_duration,
+        
+        "email": user_email_data.email if user_email_data else None,
+        "is_email_verified": user_email_data.is_verified if user_email_data else False
     }
 
 @app.get("/server/online")
@@ -178,17 +164,10 @@ def get_server_online():
             
             if response.status_code == 200:
                 data = response.json()
-                print(data)
                 if data.get("ok"):
                     val_str = data.get("value", "0")
                     online_cache["count"] = int(float(val_str))
                     online_cache["last_updated"] = current_time
-                    print(f"Online updated: {online_cache['count']}")
-                else:
-                    print(f"Placeholder API error: {data}")
-            else:
-                print(f"Placeholder API status code: {response.status_code}")
-
         except Exception as e:
             print(f"Failed to fetch online: {e}")
     
@@ -197,7 +176,7 @@ def get_server_online():
 @app.post("/auth/change-password")
 async def change_password(
     body: schemas.ChangePasswordRequest,
-    user: models.AuthTGUser = Depends(get_current_user_orm),
+    user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm),
     db: Session = Depends(database.get_db)
 ):
     db.add(user)
@@ -228,7 +207,7 @@ async def change_password(
         return {"status": "success", "message": "Пароль изменен"}
 
 @app.post("/auth/request-unlink")
-async def request_unlink(user: models.AuthTGUser = Depends(get_current_user_orm)):
+async def request_unlink(user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm)):
     if not user.activeTG or not user.chatid:
         raise HTTPException(status_code=400, detail="Telegram не привязан")
 
@@ -253,8 +232,6 @@ def check_action_status(request_id: str):
         del bot_auth.pending_confirmations[request_id]
         
     return {"status": status}
-
-# --- TELEGRAM LOGIN (DEEP LINK) ---
 
 @app.get("/auth/generate-link")
 def generate_tg_link():
@@ -284,22 +261,9 @@ def check_tg_link(body: dict, response: Response, db: Session = Depends(database
 
     return {"status": "pending"}
 
-# ... imports ...
-
 @app.get("/clans/top", response_model=list[schemas.ClanRankingItem])
 def get_top_clans(all: bool = Query(False, description="Вернуть все кланы вместо ТОП-10"),
     db: Session = Depends(database.get_db)):
-
-    # SELECT 
-    #   cd.clan_name, cd.leader, cd.member_count, 
-    #   COALESCE(cr.pvp_elo, 0) as rating,
-    #   COUNT(cw.winner_clan) as wins
-    # FROM clan_data cd
-    # LEFT JOIN clan_rating cr ON cd.clan_name = cr.clan_name
-    # LEFT JOIN clan_wars cw ON cd.clan_name = cw.winner_clan
-    # GROUP BY cd.clan_name
-    # ORDER BY rating DESC, wins DESC
-    # LIMIT 10
     
     rating_calc = cast(
         func.round(func.coalesce(models.ClanRating.final_rating, 0)), 
@@ -371,7 +335,7 @@ def get_clan_details(clan_name: str, db: Session = Depends(database.get_db)):
         members_list.append({
             "name": m.player_name,
             "role": role_str,
-            "joined_date": "Давно" # Заглушка, т.к. в базе нет поля даты
+            "joined_date": "Давно"
         })
 
     members_list.sort(key=lambda x: {"LEADER": 0, "ADMIN": 1, "MEMBER": 2}[x["role"]])
@@ -383,7 +347,7 @@ def get_clan_details(clan_name: str, db: Session = Depends(database.get_db)):
         "rank_position": rank_position,
         "rating": current_rating,
         "rank_title": clan_data.clan_rank or "Новичок",
-        "balance": int(clan_data.balance) if clan_data.balance else 0, # Округляем до целого
+        "balance": int(clan_data.balance) if clan_data.balance else 0,
         "activity_points": activity_points,
         "stats": {
             "wins": wins_count,

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from typing import List, Optional
 
 class LoginRequest(BaseModel):
@@ -36,6 +36,10 @@ class UserResponse(BaseModel):
     last_login_timestamp: Optional[int] = 0
     last_ip: Optional[str] = "Неизвестно"
     session_duration: Optional[int] = 0
+    
+    # Добавленные поля для почты (делаем Optional, чтобы не сломать текущий код)
+    email: Optional[str] = None
+    is_email_verified: Optional[bool] = False
     
     class Config:
         from_attributes = True
@@ -79,3 +83,10 @@ class ClanDetailsResponse(BaseModel):
     activity_points: int
     stats: ClanStatsSchema
     members: List[ClanMemberSchema]
+
+class EmailRequestSchema(BaseModel):
+    email: EmailStr
+
+class EmailVerifySchema(BaseModel):
+    email: EmailStr
+    code: str

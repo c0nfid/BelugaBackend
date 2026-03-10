@@ -4,7 +4,11 @@ import json
 import os
 from datetime import datetime, timedelta
 from typing import Optional
-from jose import jwt
+from jose import jwt, JWTError
+from fastapi import Depends, HTTPException, Cookie
+from sqlalchemy.orm import Session
+
+from . import database, models
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM")
@@ -54,3 +58,22 @@ def verify_telegram_data(data: dict) -> bool:
     hmac_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
     
     return hmac_hash == check_hash
+
+def get_token_from_cookie(access_token: Optional[str] = Cookie(None)):
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return access_token
+
+def get_current_user_orm(token: str = Depends(get_token_from_cookie), db: Session = Depends(database.get_db)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if not username:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
