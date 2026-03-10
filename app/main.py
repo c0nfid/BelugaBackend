@@ -72,6 +72,8 @@ online_cache = {
 
 CACHE_TTL = 300  # 5 минут в секундах
 
+password_change_codes = {}
+
 PH_HOST = os.getenv("PLACEHOLDER_API_HOST")
 PH_PORT = os.getenv("PLACEHOLDER_API_PORT")
 
@@ -193,19 +195,71 @@ async def change_password(
         if not request_id:
             raise HTTPException(status_code=500, detail="Ошибка бота")
             
-        return {"status": "confirmation_required", "request_id": request_id}
+        return {"status": "confirmation_required", "method": "telegram", "request_id": request_id}
 
-    else:
-        if not body.current_password:
-            raise HTTPException(status_code=400, detail="Введите текущий пароль")
+    user_email = db.query(models.UserEmail).filter(models.UserEmail.nickname == user.playername).first()
+    if user_email and user_email.is_verified:
+        import random
+        import time
+        code = str(random.randint(100000, 999999))
         
-        if not auth_utils.verify_password(body.current_password, user.password):
-            raise HTTPException(status_code=400, detail="Неверный текущий пароль")
+        password_change_codes[user.playername] = {
+            "code": code,
+            "new_password": body.new_password,
+            "expires_at": time.time() + 300
+        }
 
-        user.password = auth_utils.get_password_hash(body.new_password)
-        db.commit()
-        return {"status": "success", "message": "Пароль изменен"}
+        from app.email_utils import send_email, get_email_template
+        
+        html = get_email_template(
+            playername=user.playername,
+            title="Смена пароля",
+            description="Поступил запрос на изменение пароля от вашего аккаунта BelugaEmpire. Если это были вы, введите код ниже:",
+            code=code,
+            warning="Код действителен 5 минут. Если вы не запрашивали смену пароля, кто-то пытается получить доступ к вашему аккаунту!"
+        )
+        
+        try:
+            await send_email(user_email.email, "Смена пароля BelugaEmpire", html)
+        except Exception as e:
+            print(f"SMTP Error: {e}")
+            raise HTTPException(status_code=500, detail="Ошибка при отправке письма")
 
+        return {"status": "confirmation_required", "method": "email", "email": user_email.email}
+
+    if not body.current_password:
+        raise HTTPException(status_code=400, detail="Введите текущий пароль для подтверждения смены")
+    
+    if not auth_utils.verify_password(body.current_password, user.password):
+        raise HTTPException(status_code=400, detail="Неверный текущий пароль")
+
+    user.password = auth_utils.get_password_hash(body.new_password)
+    db.commit()
+    
+    return {"status": "success", "message": "Пароль изменен"}
+
+
+@app.post("/auth/confirm-change-password")
+async def confirm_change_password(
+    payload: schemas.EmailConfirmPasswordSchema,
+    user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm),
+    db: Session = Depends(database.get_db)
+):
+    import time
+    record = password_change_codes.get(user.playername)
+    
+    if not record or time.time() > record["expires_at"]:
+        raise HTTPException(status_code=400, detail="Код не найден или истек")
+        
+    if record["code"] != payload.code:
+        raise HTTPException(status_code=400, detail="Неверный код")
+
+    user.password = auth_utils.get_password_hash(record["new_password"])
+    db.commit()
+    
+    del password_change_codes[user.playername]
+    
+    return {"status": "success", "message": "Пароль успешно изменен"}
 @app.post("/auth/request-unlink")
 async def request_unlink(user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm)):
     if not user.activeTG or not user.chatid:
