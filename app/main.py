@@ -135,7 +135,12 @@ async def login_with_password(creds: schemas.LoginRequest, response: Response, d
 @app.post("/auth/confirm-login")
 def confirm_login(payload: schemas.EmailConfirmLoginSchema, response: Response, db: Session = Depends(database.get_db)):
     import time
-    record = login_email_codes.get(payload.username)
+    
+    user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == payload.username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    record = login_email_codes.get(user.playername)
     
     if not record or time.time() > record["expires_at"]:
         raise HTTPException(status_code=400, detail="Код не найден или срок действия истек")
@@ -143,14 +148,10 @@ def confirm_login(payload: schemas.EmailConfirmLoginSchema, response: Response, 
     if record["code"] != payload.code:
         raise HTTPException(status_code=400, detail="Неверный код")
 
-    user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == payload.username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-
     access_token = auth_utils.create_access_token(data={"sub": user.playername})
     response.set_cookie(key="access_token", value=access_token, httponly=True, max_age=3600, samesite="lax", secure=False)
     
-    del login_email_codes[payload.username]
+    del login_email_codes[user.playername]
     
     return {"status": "success", "message": "Login successful"}
 
