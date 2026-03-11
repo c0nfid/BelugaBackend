@@ -96,3 +96,7 @@ class EmailConfirmUnlinkSchema(BaseModel):
 
 class EmailConfirmPasswordSchema(BaseModel):
     code: str
+
+class EmailConfirmLoginSchema(BaseModel):
+    username: str
+    code: str

@@ -73,21 +73,86 @@ online_cache = {
 CACHE_TTL = 300  # 5 минут в секундах
 
 password_change_codes = {}
+login_email_codes = {}
 
 PH_HOST = os.getenv("PLACEHOLDER_API_HOST")
 PH_PORT = os.getenv("PLACEHOLDER_API_PORT")
 
 @app.post("/login")
-def login_with_password(creds: schemas.LoginRequest, response: Response, db: Session = Depends(database.get_db)):
+async def login_with_password(creds: schemas.LoginRequest, response: Response, db: Session = Depends(database.get_db)):
     user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == creds.username).first()
     if not user:
         raise HTTPException(status_code=400, detail="Пользователь не найден")
     if not auth_utils.verify_password(creds.password, user.password):
-        raise HTTPException(status_code=400, detail="Неверный пароль")
+        raise HTTPException(status_code=400, detail="Неверный логин или пароль")
+
+    user_email = db.query(models.UserEmail).filter(models.UserEmail.nickname == user.playername).first()
+    
+    if user_email and user_email.is_verified:
+        import random
+        import time
+        code = str(random.randint(100000, 999999))
+        
+        login_email_codes[user.playername] = {
+            "code": code,
+            "expires_at": time.time() + 300
+        }
+
+        from app.email_utils import send_email, get_email_template
+        
+        html = get_email_template(
+            playername=user.playername,
+            title="Вход в аккаунт",
+            description="Поступил запрос на вход в ваш личный кабинет BelugaEmpire. Для завершения авторизации введите код:",
+            code=code,
+            warning="Код действителен 5 минут. Если вы не пытались войти на сайт, немедленно смените пароль!"
+        )
+        
+        try:
+            await send_email(user_email.email, "Код для входа BelugaEmpire", html)
+        except Exception as e:
+            print(f"SMTP Error: {e}")
+            raise HTTPException(status_code=500, detail="Ошибка при отправке письма с кодом")
+
+        email_parts = user_email.email.split('@')
+        if len(email_parts[0]) > 2:
+            masked_email = email_parts[0][:2] + "***@" + email_parts[1]
+        else:
+            masked_email = "***@" + email_parts[1]
+
+        return {
+            "status": "confirmation_required", 
+            "method": "email", 
+            "masked_email": masked_email,
+            "message": "Требуется код из письма"
+        }
 
     access_token = auth_utils.create_access_token(data={"sub": user.playername})
     response.set_cookie(key="access_token", value=access_token, httponly=True, max_age=3600, samesite="lax", secure=False)
-    return {"message": "Login successful"}
+    return {"status": "success", "message": "Login successful"}
+
+
+@app.post("/auth/confirm-login")
+def confirm_login(payload: schemas.EmailConfirmLoginSchema, response: Response, db: Session = Depends(database.get_db)):
+    import time
+    record = login_email_codes.get(payload.username)
+    
+    if not record or time.time() > record["expires_at"]:
+        raise HTTPException(status_code=400, detail="Код не найден или срок действия истек")
+        
+    if record["code"] != payload.code:
+        raise HTTPException(status_code=400, detail="Неверный код")
+
+    user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == payload.username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    access_token = auth_utils.create_access_token(data={"sub": user.playername})
+    response.set_cookie(key="access_token", value=access_token, httponly=True, max_age=3600, samesite="lax", secure=False)
+    
+    del login_email_codes[payload.username]
+    
+    return {"status": "success", "message": "Login successful"}
 
 @app.post("/logout")
 def logout(response: Response):
