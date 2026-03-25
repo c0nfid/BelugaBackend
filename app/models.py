@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Boolean, BigInteger, Float, Numeric, Text, ForeignKey, or_, Date, func, DateTime
 from datetime import datetime
 from .database import Base
+from sqlalchemy.orm import relationship
 
 class AuthTGUser(Base):
     __tablename__ = "AuthTGUsers"
@@ -122,3 +123,47 @@ class UserEmail(Base):
     email = Column(String(255), unique=True, nullable=False)
     is_verified = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class Boss(Base):
+    __tablename__ = "bosses"
+    __table_args__ = {"schema": "belugadb"}
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), unique=True, nullable=False)
+    display_name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    base_health = Column(BigInteger, nullable=False)
+    base_damage = Column(Integer, nullable=False)
+    damage_modifier = Column(Numeric(10, 2), default=1.00)
+    health_modifier = Column(Numeric(10, 2), default=1.00)
+    max_players = Column(Integer, default=1)
+    dungeon_name = Column(String(100), nullable=True)
+
+    difficulties = relationship("BossDifficulty", back_populates="boss", cascade="all, delete-orphan")
+    drops = relationship("BossDrop", back_populates="boss", cascade="all, delete-orphan")
+
+class BossDifficulty(Base):
+    __tablename__ = "boss_difficulties"
+    __table_args__ = {"schema": "belugadb"}
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    boss_id = Column(Integer, ForeignKey("belugadb.bosses.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(50), nullable=False)
+    level = Column(Integer, nullable=False)
+
+    boss = relationship("Boss", back_populates="difficulties")
+    drops = relationship("BossDrop", back_populates="difficulty")
+
+class BossDrop(Base):
+    __tablename__ = "boss_drops"
+    __table_args__ = {"schema": "belugadb"}
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    boss_id = Column(Integer, ForeignKey("belugadb.bosses.id", ondelete="CASCADE"), nullable=False)
+    difficulty_id = Column(Integer, ForeignKey("belugadb.boss_difficulties.id", ondelete="CASCADE"), nullable=True)
+    item_name = Column(String(100), nullable=False)
+    min_amount = Column(Integer, default=1)
+    max_amount = Column(Integer, default=1)
+
+    boss = relationship("Boss", back_populates="drops")
+    difficulty = relationship("BossDifficulty", back_populates="drops")

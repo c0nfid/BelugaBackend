@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from app import database, models
 
 router = APIRouter(
-    prefix="/wiki",
+    prefix="/api/wiki",
     tags=["Wiki"]
 )
 
@@ -65,3 +65,46 @@ def get_enchantment_by_name(name: str, db: Session = Depends(database.get_db)):
         "max_level": result.max_level,
         "items": result.items.split(",") if result.items else []
     }
+
+@router.get("/bosses")
+def get_all_bosses(db: Session = Depends(database.get_db)):
+    # Подгружаем боссов сразу со связанными таблицами
+    bosses = db.query(models.Boss).options(
+        joinedload(models.Boss.difficulties),
+        joinedload(models.Boss.drops)
+    ).all()
+
+    result = []
+    for boss in bosses:
+        difficulties =[
+            {"id": d.id, "name": d.name, "level": d.level} 
+            for d in boss.difficulties
+        ]
+        # Сортируем сложности по уровню
+        difficulties.sort(key=lambda x: x["level"])
+
+        drops =[
+            {
+                "id": drop.id,
+                "difficulty_id": drop.difficulty_id,
+                "item_name": drop.item_name,
+                "min_amount": drop.min_amount,
+                "max_amount": drop.max_amount
+            } for drop in boss.drops
+        ]
+
+        result.append({
+            "id": boss.name, # Удобно для URL (например, /wiki/bosses/kraken)
+            "display_name": boss.display_name,
+            "description": boss.description,
+            "base_health": boss.base_health,
+            "base_damage": boss.base_damage,
+            "damage_modifier": float(boss.damage_modifier) if boss.damage_modifier else 1.0,
+            "health_modifier": float(boss.health_modifier) if boss.health_modifier else 1.0,
+            "max_players": boss.max_players,
+            "dungeon_name": boss.dungeon_name,
+            "difficulties": difficulties,
+            "drops": drops
+        })
+        
+    return result

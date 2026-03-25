@@ -100,3 +100,8 @@ class EmailConfirmPasswordSchema(BaseModel):
 class EmailConfirmLoginSchema(BaseModel):
     username: str
     code: str
+
+class InternalEmailSchema(BaseModel):
+    nickname: str
+    email: str
+    code: str

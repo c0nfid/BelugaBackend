@@ -7,7 +7,7 @@ import requests
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, status, Response, Cookie, Query
+from fastapi import FastAPI, Depends, HTTPException, status, Response, Cookie, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -46,11 +46,11 @@ def get_current_username_docs(credentials: HTTPBasicCredentials = Depends(securi
         raise HTTPException(status_code=401, detail="Incorrect auth", headers={"WWW-Authenticate": "Basic"})
     return credentials.username
 
-@app.get("/docs", include_in_schema=False)
+@app.get("/api/docs", include_in_schema=False)
 async def get_swagger_documentation(username: str = Depends(get_current_username_docs)):
-    return get_swagger_ui_html(openapi_url="/openapi.json", title="Beluga API Docs")
+    return get_swagger_ui_html(openapi_url="/api/openapi.json", title="Beluga API Docs")
 
-@app.get("/openapi.json", include_in_schema=False)
+@app.get("/api/openapi.json", include_in_schema=False)
 async def get_open_api_endpoint(username: str = Depends(get_current_username_docs)):
     return get_openapi(title="BelugaEmpire API", version="1.0.0", routes=app.routes)
 
@@ -78,7 +78,7 @@ login_email_codes = {}
 PH_HOST = os.getenv("PLACEHOLDER_API_HOST")
 PH_PORT = os.getenv("PLACEHOLDER_API_PORT")
 
-@app.post("/login")
+@app.post("/api/login")
 async def login_with_password(creds: schemas.LoginRequest, response: Response, db: Session = Depends(database.get_db)):
     user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == creds.username).first()
     if not user:
@@ -132,7 +132,7 @@ async def login_with_password(creds: schemas.LoginRequest, response: Response, d
     return {"status": "success", "message": "Login successful"}
 
 
-@app.post("/auth/confirm-login")
+@app.post("/api/auth/confirm-login")
 def confirm_login(payload: schemas.EmailConfirmLoginSchema, response: Response, db: Session = Depends(database.get_db)):
     import time
     
@@ -155,12 +155,12 @@ def confirm_login(payload: schemas.EmailConfirmLoginSchema, response: Response, 
     
     return {"status": "success", "message": "Login successful"}
 
-@app.post("/logout")
+@app.post("/api/logout")
 def logout(response: Response):
     response.delete_cookie(key="access_token")
     return {"message": "Logged out"}
 
-@app.get("/me", response_model=schemas.UserResponse)
+@app.get("/api/me", response_model=schemas.UserResponse)
 def read_users_me(user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm), db: Session = Depends(database.get_db)):
     player_data = db.query(models.PlayerData).filter(models.PlayerData.player_name == user.playername).first()
     playtime_data = db.query(models.PlayerPlaytime).filter(models.PlayerPlaytime.player_name == user.playername).first()
@@ -215,7 +215,7 @@ def read_users_me(user: models.AuthTGUser = Depends(auth_utils.get_current_user_
         "is_email_verified": user_email_data.is_verified if user_email_data else False
     }
 
-@app.get("/server/online")
+@app.get("/api/server/online")
 def get_server_online():
     global online_cache
     current_time = time.time()
@@ -241,7 +241,7 @@ def get_server_online():
     
     return {"online": online_cache["count"]}
 
-@app.post("/auth/change-password")
+@app.post("/api/auth/change-password")
 async def change_password(
     body: schemas.ChangePasswordRequest,
     user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm),
@@ -305,7 +305,7 @@ async def change_password(
     return {"status": "success", "message": "Пароль изменен"}
 
 
-@app.post("/auth/confirm-change-password")
+@app.post("/api/auth/confirm-change-password")
 async def confirm_change_password(
     payload: schemas.EmailConfirmPasswordSchema,
     user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm),
@@ -326,7 +326,7 @@ async def confirm_change_password(
     del password_change_codes[user.playername]
     
     return {"status": "success", "message": "Пароль успешно изменен"}
-@app.post("/auth/request-unlink")
+@app.post("/api/auth/request-unlink")
 async def request_unlink(user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm)):
     if not user.activeTG or not user.chatid:
         raise HTTPException(status_code=400, detail="Telegram не привязан")
@@ -342,7 +342,7 @@ async def request_unlink(user: models.AuthTGUser = Depends(auth_utils.get_curren
         
     return {"request_id": request_id, "message": "Подтвердите действие в боте"}
 
-@app.get("/auth/check-status/{request_id}")
+@app.get("/api/auth/check-status/{request_id}")
 def check_action_status(request_id: str):
     if request_id not in bot_auth.pending_confirmations:
          return {"status": "expired"}
@@ -353,14 +353,14 @@ def check_action_status(request_id: str):
         
     return {"status": status}
 
-@app.get("/auth/generate-link")
+@app.get("/api/auth/generate-link")
 def generate_tg_link():
     code = str(uuid.uuid4())
     bot_auth.login_attempts[code] = {"status": "pending", "created_at": time.time()}
     bot_name = os.getenv("TG_BOT_NAME", "BelugaEmpireBot")
     return {"link": f"https://t.me/{bot_name}?start={code}", "code": code}
 
-@app.post("/auth/check-link")
+@app.post("/api/auth/check-link")
 def check_tg_link(body: dict, response: Response, db: Session = Depends(database.get_db)):
     code = body.get("code")
     if not code or code not in bot_auth.login_attempts:
@@ -381,7 +381,7 @@ def check_tg_link(body: dict, response: Response, db: Session = Depends(database
 
     return {"status": "pending"}
 
-@app.get("/clans/top", response_model=list[schemas.ClanRankingItem])
+@app.get("/api/clans/top", response_model=list[schemas.ClanRankingItem])
 def get_top_clans(all: bool = Query(False, description="Вернуть все кланы вместо ТОП-10"),
     db: Session = Depends(database.get_db)):
     
@@ -424,7 +424,7 @@ def get_top_clans(all: bool = Query(False, description="Вернуть все к
         
     return response
     
-@app.get("/clans/{clan_name}", response_model=schemas.ClanDetailsResponse)
+@app.get("/api/clans/{clan_name}", response_model=schemas.ClanDetailsResponse)
 def get_clan_details(clan_name: str, db: Session = Depends(database.get_db)):
     clan_data = db.query(models.ClanData).filter(models.ClanData.clan_name == clan_name).first()
     if not clan_data:
@@ -475,3 +475,35 @@ def get_clan_details(clan_name: str, db: Session = Depends(database.get_db)):
         },
         "members": members_list
     }
+
+def verify_internal_token(x_internal_token: str = Header(None)):
+    # Берем токен из .env файла. Если его там нет, используем дефолтный (лучше задать свой!)
+    secret = os.getenv("INTERNAL_API_SECRET", "super_secret_beluga_key_123")
+    
+    if not x_internal_token or x_internal_token != secret:
+        raise HTTPException(
+            status_code=403, 
+            detail="Доступ запрещен. Неверный токен внутренней авторизации."
+        )
+
+# --- САМ ЭНДПОИНТ (Закрыт зависимостью verify_internal_token) ---
+@app.post("/api/internal/send-code", dependencies=[Depends(verify_internal_token)])
+async def internal_send_code(payload: schemas.InternalEmailSchema):
+    from app.email_utils import send_email, get_email_template
+    
+    # Формируем красивое письмо по твоему шаблону
+    html = get_email_template(
+        playername=payload.nickname,
+        title="Код подтверждения",
+        description="Поступил системный запрос, требующий вашего подтверждения. Введите этот код:",
+        code=payload.code,
+        warning="Код действителен ограниченное время. Если вы не запрашивали этот код, просто проигнорируйте письмо."
+    )
+    
+    try:
+        await send_email(payload.email, f"Код подтверждения BelugaEmpire {payload.code}", html)
+    except Exception as e:
+        print(f"SMTP Error on internal route: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка при отправке письма")
+
+    return {"status": "success", "message": f"Письмо успешно отправлено на {payload.email}"}

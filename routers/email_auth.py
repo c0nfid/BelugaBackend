@@ -45,7 +45,7 @@ async def send_verification_code(
     )
 
     try:
-        await send_email(email, "Код подтверждения BelugaEmpire", html)
+        await send_email(email, f"Код подтверждения BelugaEmpire {code}", html)
     except Exception as e:
         raise HTTPException(status_code=500, detail="Ошибка при отправке письма.")
 
