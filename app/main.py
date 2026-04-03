@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import time
 import asyncio
@@ -45,6 +46,36 @@ def get_current_username_docs(credentials: HTTPBasicCredentials = Depends(securi
     if not (correct_user and correct_password):
         raise HTTPException(status_code=401, detail="Incorrect auth", headers={"WWW-Authenticate": "Basic"})
     return credentials.username
+
+def check_group_permission(db: Session, group_name: str, target_perm: str) -> bool:
+    if not group_name:
+        return False
+        
+    visited = set()
+    queue = [group_name.lower()]
+    
+    while queue:
+        current_group = queue.pop(0)
+        if current_group in visited:
+            continue
+        visited.add(current_group)
+        
+        perms = db.query(
+            models.LuckpermsGroupPermission.permission, 
+            models.LuckpermsGroupPermission.value
+        ).filter(
+            models.LuckpermsGroupPermission.name == current_group
+        ).all()
+        
+        for perm, val in perms:
+            if perm == target_perm and val == 1:
+                return True
+            if perm.startswith("group.") and val == 1:
+                parent_group = perm[6:]
+                if parent_group not in visited:
+                    queue.append(parent_group)
+    return False
+
 
 @app.get("/api/docs", include_in_schema=False)
 async def get_swagger_documentation(username: str = Depends(get_current_username_docs)):
@@ -109,7 +140,7 @@ async def login_with_password(creds: schemas.LoginRequest, response: Response, d
         )
         
         try:
-            await send_email(user_email.email, "Код для входа BelugaEmpire", html)
+            await send_email(user_email.email, f"Код для входа BelugaEmpire {code}", html)
         except Exception as e:
             print(f"SMTP Error: {e}")
             raise HTTPException(status_code=500, detail="Ошибка при отправке письма с кодом")
@@ -178,6 +209,8 @@ def read_users_me(user: models.AuthTGUser = Depends(auth_utils.get_current_user_
     login_ts = player_data.login_timestamp if (player_data and player_data.login_timestamp) else 0
     logout_ts = player_data.logout_timestamp if (player_data and player_data.logout_timestamp) else 0
 
+    fake_nick_data = db.query(models.FakeNick).filter(models.FakeNick.player_name == user.playername).first()
+
     session_duration = 0
     
     if login_ts > 0:
@@ -187,6 +220,9 @@ def read_users_me(user: models.AuthTGUser = Depends(auth_utils.get_current_user_
             session_duration = (logout_ts - login_ts) // 1000
     
     if session_duration < 0: session_duration = 0
+
+    group = player_data.primary_group if (player_data and player_data.primary_group) else "default"
+    can_edit = check_group_permission(db, group, "essentials.nick")
 
     return {
         "playername": user.playername,
@@ -212,7 +248,10 @@ def read_users_me(user: models.AuthTGUser = Depends(auth_utils.get_current_user_
         "session_duration": session_duration,
         
         "email": user_email_data.email if user_email_data else None,
-        "is_email_verified": user_email_data.is_verified if user_email_data else False
+        "is_email_verified": user_email_data.is_verified if user_email_data else False,
+
+        "fake_player_name": fake_nick_data.fake_player_name if fake_nick_data else None,
+        "can_edit_nickname": can_edit
     }
 
 @app.get("/api/server/online")
@@ -477,7 +516,6 @@ def get_clan_details(clan_name: str, db: Session = Depends(database.get_db)):
     }
 
 def verify_internal_token(x_internal_token: str = Header(None)):
-    # Берем токен из .env файла. Если его там нет, используем дефолтный (лучше задать свой!)
     secret = os.getenv("INTERNAL_API_SECRET", "super_secret_beluga_key_123")
     
     if not x_internal_token or x_internal_token != secret:
@@ -486,18 +524,16 @@ def verify_internal_token(x_internal_token: str = Header(None)):
             detail="Доступ запрещен. Неверный токен внутренней авторизации."
         )
 
-# --- САМ ЭНДПОИНТ (Закрыт зависимостью verify_internal_token) ---
 @app.post("/api/internal/send-code", dependencies=[Depends(verify_internal_token)])
 async def internal_send_code(payload: schemas.InternalEmailSchema):
     from app.email_utils import send_email, get_email_template
     
-    # Формируем красивое письмо по твоему шаблону
     html = get_email_template(
         playername=payload.nickname,
-        title="Код подтверждения",
-        description="Поступил системный запрос, требующий вашего подтверждения. Введите этот код:",
+        title="Вход в игру",
+        description="Поступил запрос на вход в игру. Для завершения авторизации введите код:",
         code=payload.code,
-        warning="Код действителен ограниченное время. Если вы не запрашивали этот код, просто проигнорируйте письмо."
+        warning="Код действителен 5 минут. Если вы не пытались войти в игру, немедленно смените пароль!"
     )
     
     try:
@@ -507,3 +543,46 @@ async def internal_send_code(payload: schemas.InternalEmailSchema):
         raise HTTPException(status_code=500, detail="Ошибка при отправке письма")
 
     return {"status": "success", "message": f"Письмо успешно отправлено на {payload.email}"}
+
+
+@app.post("/api/profile/nickname")
+def update_nickname(
+    payload: schemas.UpdateNicknameRequest, 
+    user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm), 
+    db: Session = Depends(database.get_db)
+):
+    player_data = db.query(models.PlayerData).filter(models.PlayerData.player_name == user.playername).first()
+    group = player_data.primary_group if (player_data and player_data.primary_group) else "default"
+    
+    if not check_group_permission(db, group, "essentials.nick"):
+        raise HTTPException(status_code=403, detail="У вашей привилегии нет доступа к смене псевдонима.")
+
+    new_nick = payload.new_nickname.strip() if payload.new_nickname else None
+
+    if new_nick:
+        if len(new_nick) > 16 or len(new_nick) < 3:
+            raise HTTPException(status_code=400, detail="Никнейм должен быть от 3 до 16 символов.")
+            
+        if not re.match(r"^[A-Za-z0-9_]+$", new_nick):
+            raise HTTPException(status_code=400, detail="Разрешены только английские буквы, цифры и подчеркивание.")
+            
+        existing = db.query(models.FakeNick).filter(models.FakeNick.fake_player_name == new_nick).first()
+        if existing and existing.player_name != user.playername:
+            raise HTTPException(status_code=400, detail="Этот псевдоним уже занят другим игроком.")
+
+    fake_record = db.query(models.FakeNick).filter(models.FakeNick.player_name == user.playername).first()
+    
+    if not fake_record:
+        fake_record = models.FakeNick(
+            player_name=user.playername,
+            uuid=user.uuid,
+            fake_player_name=new_nick,
+            updated_at=int(time.time() * 1000)
+        )
+        db.add(fake_record)
+    else:
+        fake_record.fake_player_name = new_nick
+        fake_record.updated_at = int(time.time() * 1000)
+        
+    db.commit()
+    return {"status": "success", "message": "Псевдоним успешно обновлен"}

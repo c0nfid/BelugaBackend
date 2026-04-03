@@ -167,3 +167,25 @@ class BossDrop(Base):
 
     boss = relationship("Boss", back_populates="drops")
     difficulty = relationship("BossDifficulty", back_populates="drops")
+
+class FakeNick(Base):
+    __tablename__ = "fake_nicks"
+    __table_args__ = {"schema": "essential"}
+
+    player_name = Column(String(36), primary_key=True)
+    uuid = Column(String(36), index=True, nullable=True)
+    fake_player_name = Column(String(36), unique=True, nullable=True)
+    updated_at = Column(BigInteger, default=0)
+
+class LuckpermsGroupPermission(Base):
+    __tablename__ = "luckperms_group_permissions"
+    __table_args__ = {"schema": "LuckPerms"}
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(36), index=True, nullable=False)
+    permission = Column(String(200), nullable=False)
+    value = Column(Integer, nullable=False)
+    server = Column(String(36), nullable=False)
+    world = Column(String(64), nullable=False)
+    expiry = Column(BigInteger, nullable=False)
+    contexts = Column(String(200), nullable=False)

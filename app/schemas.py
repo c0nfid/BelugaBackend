@@ -37,9 +37,11 @@ class UserResponse(BaseModel):
     last_ip: Optional[str] = "Неизвестно"
     session_duration: Optional[int] = 0
     
-    # Добавленные поля для почты (делаем Optional, чтобы не сломать текущий код)
     email: Optional[str] = None
     is_email_verified: Optional[bool] = False
+
+    fake_player_name: Optional[str] = None
+    can_edit_nickname: Optional[bool] = False
     
     class Config:
         from_attributes = True
@@ -105,3 +107,7 @@ class InternalEmailSchema(BaseModel):
     nickname: str
     email: str
     code: str
+
+class UpdateNicknameRequest(BaseModel):
+    new_nickname: Optional[str] = None
+

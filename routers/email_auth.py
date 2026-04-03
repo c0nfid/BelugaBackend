@@ -105,7 +105,7 @@ async def request_unlink_email(
     )
 
     try:
-        await send_email(user_email.email, "Отвязка почты BelugaEmpire", html)
+        await send_email(user_email.email, f"Отвязка почты BelugaEmpire {code}", html)
     except Exception:
         raise HTTPException(status_code=500, detail="Ошибка при отправке письма.")
 
