@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, CommandObject
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.client.session.aiohttp import AiohttpSession
 
 from . import database, models, auth_utils
 
@@ -111,8 +112,18 @@ async def register_handlers(dp: Dispatcher):
         await callback.message.edit_text(msg)
         await callback.answer("Готово!")
 
+def get_bot() -> Bot:
+    token = os.getenv("TG_BOT_TOKEN")
+    proxy = os.getenv("TG_PROXY")
+    
+    if proxy:
+        session = AiohttpSession(proxy=proxy)
+        return Bot(token=token, session=session)
+        
+    return Bot(token=token)
+
 async def start_bot_polling(token: str):
-    bot = Bot(token=token)
+    bot = get_bot()
     dp = Dispatcher()
     await register_handlers(dp)
 

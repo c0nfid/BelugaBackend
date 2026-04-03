@@ -289,8 +289,8 @@ async def change_password(
     db.add(user)
 
     if user.activeTG and user.chatid:
-        from aiogram import Bot
-        bot = Bot(token=os.getenv("TG_BOT_TOKEN"))
+        from app.bot_auth import get_bot
+        bot = get_bot()
         
         request_id = await bot_auth.send_confirmation_request(
             bot, user.chatid, "change_password", data={"new_password": body.new_password}
@@ -370,8 +370,8 @@ async def request_unlink(user: models.AuthTGUser = Depends(auth_utils.get_curren
     if not user.activeTG or not user.chatid:
         raise HTTPException(status_code=400, detail="Telegram не привязан")
 
-    from aiogram import Bot
-    bot = Bot(token=os.getenv("TG_BOT_TOKEN"))
+    from app.bot_auth import get_bot
+    bot = get_bot()
     
     request_id = await bot_auth.send_confirmation_request(bot, user.chatid, "unlink")
     await bot.session.close()
