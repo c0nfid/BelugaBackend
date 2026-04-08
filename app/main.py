@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, cast, Integer, or_
 
 from . import models, schemas, database, auth_utils, bot_auth
-from routers import wiki, email_auth
+from routers import wiki, email_auth, shop
 
 models.Base.metadata.create_all(bind=database.engine)
 
@@ -39,6 +39,7 @@ security = HTTPBasic()
 
 app.include_router(wiki.router)
 app.include_router(email_auth.router)
+app.include_router(shop.router)
 
 def get_current_username_docs(credentials: HTTPBasicCredentials = Depends(security)):
     correct_user = secrets.compare_digest(credentials.username, os.getenv("SWAGGER_USER", "admin"))

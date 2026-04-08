@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy import Column, Integer, String, Boolean, BigInteger, Float, Numeric, Text, ForeignKey, or_, Date, func, DateTime
 from datetime import datetime
 from .database import Base
@@ -189,3 +190,74 @@ class LuckpermsGroupPermission(Base):
     world = Column(String(64), nullable=False)
     expiry = Column(BigInteger, nullable=False)
     contexts = Column(String(200), nullable=False)
+
+
+class ShopCategory(Base):
+    __tablename__ = "shop_categories"
+    __table_args__ = {"schema": "belugadb"}
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(50), nullable=False)
+    sort_order = Column(Integer, default=0)
+
+class ShopProduct(Base):
+    __tablename__ = "shop_products"
+    __table_args__ = {"schema": "belugadb"}
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    category_id = Column(Integer, ForeignKey("belugadb.shop_categories.id"))
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    price = Column(Integer, nullable=False)
+    currency_type = Column(String(20), default="donate") # 'donate' (Fish-баксы) или 'soft' (Монеты)
+    
+    command_template = Column(String(255), nullable=False) 
+    item_id = Column(String(100), nullable=False)        
+    amount = Column(String(50), nullable=False)          
+    require_online = Column(Boolean, default=True)       
+    required_free_slots = Column(Integer, default=0)     
+
+    image_url = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True)
+
+    allow_quantity = Column(Boolean, default=False)
+    variants = Column(Text, nullable=True)
+
+class ShopPurchaseLog(Base):
+    __tablename__ = "shop_purchase_logs"
+    __table_args__ = {"schema": "belugadb"}
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    player_name = Column(String(120), index=True, nullable=False)
+    product_id = Column(Integer, ForeignKey("belugadb.shop_products.id"))
+    price_paid = Column(Integer, nullable=False)
+    currency_type = Column(String(20), nullable=False)
+    
+    status = Column(String(20), default="completed")
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class WebstoreQueue(Base):
+    __tablename__ = "webstore_queue"
+    __table_args__ = {"schema": "shop_msqlc"}
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    external_order_id = Column(String(100), nullable=True)
+    player_uuid = Column(String(36), nullable=True)
+    player_name = Column(String(16), nullable=True)
+    command_text = Column(Text, nullable=False)
+    require_online = Column(Boolean, default=False)
+    required_free_slots = Column(Integer, default=0)
+    success_message = Column(Text, nullable=True)
+    failure_message = Column(Text, nullable=True)
+    status = Column(String(16), default='PENDING')
+    attempt_count = Column(Integer, default=0)
+    retry_delay_seconds = Column(Integer, nullable=True, default=30)
+    max_attempts = Column(Integer, nullable=True, default=50)
+    next_attempt_at = Column(DateTime, server_default=func.now())
+    locked_by = Column(String(64), nullable=True)
+    lock_until = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=datetime.utcnow)
+    executed_at = Column(DateTime, nullable=True)
