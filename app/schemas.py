@@ -42,6 +42,13 @@ class UserResponse(BaseModel):
 
     fake_player_name: Optional[str] = None
     can_edit_nickname: Optional[bool] = False
+
+    is_banned: Optional[bool] = False
+    ban_reason: Optional[str] = None
+    ban_timestamp: Optional[int] = None
+    ban_duration: Optional[int] = None
+    ban_by: Optional[str] = None
+    total_bans: Optional[int] = 0
     
     class Config:
         from_attributes = True
@@ -103,6 +110,14 @@ class EmailConfirmLoginSchema(BaseModel):
     username: str
     code: str
 
+class ForgotPasswordRequest(BaseModel):
+    username: str
+
+class ResetPasswordRequest(BaseModel):
+    username: str
+    code: str
+    new_password: str
+    
 class InternalEmailSchema(BaseModel):
     nickname: str
     email: str

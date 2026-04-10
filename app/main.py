@@ -106,6 +106,7 @@ CACHE_TTL = 300  # 5 минут в секундах
 
 password_change_codes = {}
 login_email_codes = {}
+forgot_password_codes = {}
 
 PH_HOST = os.getenv("PLACEHOLDER_API_HOST")
 PH_PORT = os.getenv("PLACEHOLDER_API_PORT")
@@ -212,8 +213,26 @@ def read_users_me(user: models.AuthTGUser = Depends(auth_utils.get_current_user_
 
     fake_nick_data = db.query(models.FakeNick).filter(models.FakeNick.player_name == user.playername).first()
 
-    session_duration = 0
+    active_ban = db.query(models.BannedPlayer).filter(
+        models.BannedPlayer.player_name == user.playername,
+        models.BannedPlayer.isActive == 1
+    ).order_by(desc(models.BannedPlayer.id)).first()
+
+    total_bans = db.query(models.BannedPlayer).filter(
+        models.BannedPlayer.player_name == user.playername
+    ).count()
+
+    is_banned = False
+    if active_ban:
+        if active_ban.ban_duration == -1:
+            is_banned = True
+        else:
+            expires_at = active_ban.ban_timestamp + active_ban.ban_duration
+            if current_time_ms < expires_at:
+                is_banned = True
+
     
+    session_duration = 0
     if login_ts > 0:
         if login_ts > logout_ts:
             session_duration = (current_time_ms - login_ts) // 1000
@@ -252,7 +271,14 @@ def read_users_me(user: models.AuthTGUser = Depends(auth_utils.get_current_user_
         "is_email_verified": user_email_data.is_verified if user_email_data else False,
 
         "fake_player_name": fake_nick_data.fake_player_name if fake_nick_data else None,
-        "can_edit_nickname": can_edit
+        "can_edit_nickname": can_edit,
+        
+        "is_banned": is_banned,
+        "ban_reason": active_ban.reason if is_banned else None,
+        "ban_timestamp": active_ban.ban_timestamp if is_banned else None,
+        "ban_duration": active_ban.ban_duration if is_banned else None,
+        "ban_by": active_ban.ban_by if is_banned else None,
+        "total_bans": total_bans
     }
 
 @app.get("/api/server/online")
@@ -366,6 +392,79 @@ async def confirm_change_password(
     del password_change_codes[user.playername]
     
     return {"status": "success", "message": "Пароль успешно изменен"}
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password(body: schemas.ForgotPasswordRequest, db: Session = Depends(database.get_db)):
+    user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == body.username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Игрок с таким никнеймом не найден.")
+    
+    user_email = db.query(models.UserEmail).filter(
+        models.UserEmail.nickname == user.playername, 
+        models.UserEmail.is_verified == True
+    ).first()
+    
+    if not user_email:
+        raise HTTPException(status_code=400, detail="К этому аккаунту не привязана подтвержденная почта. Восстановление невозможно.")
+        
+    import random
+    import time
+    code = str(random.randint(100000, 999999))
+    
+    forgot_password_codes[user.playername] = {
+        "code": code,
+        "expires_at": time.time() + 300
+    }
+    
+    from app.email_utils import send_email, get_email_template
+    html = get_email_template(
+        playername=user.playername,
+        title="Восстановление пароля",
+        description="Поступил запрос на сброс пароля от вашего аккаунта BelugaEmpire. Введите этот код в окне восстановления:",
+        code=code,
+        warning="Код действителен 5 минут. Если вы не запрашивали сброс пароля, просто проигнорируйте это письмо."
+    )
+    
+    try:
+        await send_email(user_email.email, "Восстановление пароля BelugaEmpire", html)
+    except Exception as e:
+        print(f"SMTP Error: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка при отправке письма на почту.")
+
+    email_parts = user_email.email.split('@')
+    if len(email_parts[0]) > 2:
+        masked_email = email_parts[0][:2] + "***@" + email_parts[1]
+    else:
+        masked_email = "***@" + email_parts[1]
+
+    return {"status": "success", "masked_email": masked_email}
+
+
+@app.post("/api/auth/reset-password")
+async def reset_password(body: schemas.ResetPasswordRequest, db: Session = Depends(database.get_db)):
+    import time
+    record = forgot_password_codes.get(body.username)
+    
+    if not record or time.time() > record["expires_at"]:
+        raise HTTPException(status_code=400, detail="Код не найден или срок его действия истек.")
+        
+    if record["code"] != body.code:
+        raise HTTPException(status_code=400, detail="Неверный код восстановления.")
+
+    if len(body.new_password) < 5:
+         raise HTTPException(status_code=400, detail="Новый пароль слишком короткий (минимум 5 символов).")
+
+    user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == body.username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден.")
+
+    user.password = auth_utils.get_password_hash(body.new_password)
+    db.commit()
+    
+    del forgot_password_codes[body.username]
+    
+    return {"status": "success", "message": "Пароль успешно изменен."}
+
 @app.post("/api/auth/request-unlink")
 async def request_unlink(user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm)):
     if not user.activeTG or not user.chatid:

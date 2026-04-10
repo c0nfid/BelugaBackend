@@ -261,3 +261,15 @@ class WebstoreQueue(Base):
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=datetime.utcnow)
     executed_at = Column(DateTime, nullable=True)
+
+class BannedPlayer(Base):
+    __tablename__ = "banned_players"
+    __table_args__ = {"schema": "essential"}
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    player_name = Column(String(36), nullable=False)
+    reason = Column(Text, nullable=False)
+    ban_timestamp = Column(BigInteger, nullable=False)
+    ban_by = Column(String(36), nullable=False)
+    ban_duration = Column(BigInteger, nullable=False)
+    isActive = Column(Boolean, default=True)
