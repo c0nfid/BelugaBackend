@@ -129,6 +129,7 @@ class UpdateNicknameRequest(BaseModel):
 class PvPRankingItem(BaseModel):
     rank: int
     player_name: str
+    clan_name: Optional[str] = None
     kills: int
     deaths: int
     kd: float
@@ -136,3 +137,11 @@ class PvPRankingItem(BaseModel):
     class Config:
         from_attributes = True
 
+class EconomyRankingItem(BaseModel):
+    rank: int
+    player_name: str
+    clan_name: Optional[str] = None
+    balance: float
+
+    class Config:
+        from_attributes = True

@@ -622,13 +622,22 @@ def get_clan_details(clan_name: str, db: Session = Depends(database.get_db)):
 
 @app.get("/api/pvp/top", response_model=list[schemas.PvPRankingItem])
 def get_top_pvp(db: Session = Depends(database.get_db)):
-
     results = db.query(
-        models.PlayerPvpDaily.player_name,
+        models.PlayerPvpDaily.player_name.label("raw_name"),
+        models.AuthTGUser.playername.label("real_name"),
+        models.PlayerData.clan_name,
         func.sum(models.PlayerPvpDaily.valid_kills).label("total_kills"),
         func.sum(models.PlayerPvpDaily.valid_deaths).label("total_deaths")
+    ).outerjoin(
+        models.AuthTGUser,
+        models.PlayerPvpDaily.player_name == models.AuthTGUser.playername
+    ).outerjoin(
+        models.PlayerData,
+        models.PlayerPvpDaily.player_name == models.PlayerData.player_name
     ).group_by(
-        models.PlayerPvpDaily.player_name
+        models.PlayerPvpDaily.player_name,
+        models.AuthTGUser.playername,
+        models.PlayerData.clan_name
     ).having(
         func.sum(models.PlayerPvpDaily.valid_kills) > 0
     ).order_by(
@@ -642,12 +651,43 @@ def get_top_pvp(db: Session = Depends(database.get_db)):
         
         kd_ratio = round(kills / (deaths if deaths > 0 else 1), 2)
         
+        final_name = row.real_name if row.real_name else row.raw_name
+        
         response.append({
             "rank": idx + 1,
-            "player_name": row.player_name,
+            "player_name": final_name,
+            "clan_name": row.clan_name,
             "kills": kills,
             "deaths": deaths,
             "kd": kd_ratio
+        })
+        
+    return response
+
+@app.get("/api/economy/top", response_model=list[schemas.EconomyRankingItem])
+def get_top_economy(db: Session = Depends(database.get_db)):
+    results = db.query(
+        models.PlayerData.player_name.label("raw_name"),
+        models.AuthTGUser.playername.label("real_name"),
+        models.PlayerData.clan_name,
+        models.PlayerData.balance
+    ).outerjoin(
+        models.AuthTGUser,
+        models.PlayerData.player_name == models.AuthTGUser.playername
+    ).filter(
+        models.PlayerData.balance > 0
+    ).order_by(
+        desc(models.PlayerData.balance)
+    ).all()
+
+    response = []
+    for idx, row in enumerate(results):
+        final_name = row.real_name if row.real_name else row.raw_name
+        response.append({
+            "rank": idx + 1,
+            "player_name": final_name,
+            "clan_name": row.clan_name,
+            "balance": float(row.balance)
         })
         
     return response
