@@ -126,3 +126,13 @@ class InternalEmailSchema(BaseModel):
 class UpdateNicknameRequest(BaseModel):
     new_nickname: Optional[str] = None
 
+class PvPRankingItem(BaseModel):
+    rank: int
+    player_name: str
+    kills: int
+    deaths: int
+    kd: float
+
+    class Config:
+        from_attributes = True
+

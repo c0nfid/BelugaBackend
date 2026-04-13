@@ -620,6 +620,38 @@ def get_clan_details(clan_name: str, db: Session = Depends(database.get_db)):
         "members": members_list
     }
 
+@app.get("/api/pvp/top", response_model=list[schemas.PvPRankingItem])
+def get_top_pvp(db: Session = Depends(database.get_db)):
+
+    results = db.query(
+        models.PlayerPvpDaily.player_name,
+        func.sum(models.PlayerPvpDaily.valid_kills).label("total_kills"),
+        func.sum(models.PlayerPvpDaily.valid_deaths).label("total_deaths")
+    ).group_by(
+        models.PlayerPvpDaily.player_name
+    ).having(
+        func.sum(models.PlayerPvpDaily.valid_kills) > 0
+    ).order_by(
+        desc("total_kills"), "total_deaths"
+    ).all()
+
+    response = []
+    for idx, row in enumerate(results):
+        kills = int(row.total_kills or 0)
+        deaths = int(row.total_deaths or 0)
+        
+        kd_ratio = round(kills / (deaths if deaths > 0 else 1), 2)
+        
+        response.append({
+            "rank": idx + 1,
+            "player_name": row.player_name,
+            "kills": kills,
+            "deaths": deaths,
+            "kd": kd_ratio
+        })
+        
+    return response
+
 def verify_internal_token(x_internal_token: str = Header(None)):
     secret = os.getenv("INTERNAL_API_SECRET", "super_secret_beluga_key_123")
     
