@@ -313,8 +313,12 @@ async def change_password(
     user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm),
     db: Session = Depends(database.get_db)
 ):
-    db.add(user)
+    is_valid, err_msg = auth_utils.validate_password(body.new_password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=err_msg)
 
+    db.add(user)
+    
     if user.activeTG and user.chatid:
         from app.bot_auth import get_bot
         bot = get_bot()
@@ -451,8 +455,9 @@ async def reset_password(body: schemas.ResetPasswordRequest, db: Session = Depen
     if record["code"] != body.code:
         raise HTTPException(status_code=400, detail="Неверный код восстановления.")
 
-    if len(body.new_password) < 5:
-         raise HTTPException(status_code=400, detail="Новый пароль слишком короткий (минимум 5 символов).")
+    is_valid, err_msg = auth_utils.validate_password(body.new_password)
+    if not is_valid:
+         raise HTTPException(status_code=400, detail=err_msg)
 
     user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == body.username).first()
     if not user:

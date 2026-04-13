@@ -34,6 +34,21 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+def validate_password(password: str) -> tuple[bool, str]:
+    if not password:
+        return False, "Пароль не может быть пустым."
+    
+    if len(password) < 5:
+        return False, "Новый пароль слишком короткий (минимум 5 символов)."
+        
+    if len(password) > 64:
+        return False, "Пароль слишком длинный (максимум 64 символа)."
+        
+    if " " in password:
+         return False, "Пароль не должен содержать пробелы."
+
+    return True, ""
+
 def verify_telegram_data(data: dict) -> bool:
     """
     Проверка подписи данных от Telegram Login Widget.
