@@ -16,6 +16,8 @@ from fastapi.openapi.utils import get_openapi
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, cast, Integer, or_
 
+from collections import defaultdict
+
 from . import models, schemas, database, auth_utils, bot_auth
 from routers import wiki, email_auth, shop
 
@@ -690,6 +692,116 @@ def get_top_economy(db: Session = Depends(database.get_db)):
             "balance": float(row.balance)
         })
         
+    return response
+
+def _get_active_bosses(db: Session) -> tuple[list[models.Boss], list[str], dict[str, models.Boss]]:
+    bosses = db.query(models.Boss).filter(models.Boss.is_active == True).all()
+    boss_names = [boss.name for boss in bosses]
+    boss_map = {boss.name: boss for boss in bosses}
+    return bosses, boss_names, boss_map
+
+
+@app.get("/api/bosses/top-slayers", response_model=list[schemas.BossSlayerItem])
+def get_top_boss_slayers(db: Session = Depends(database.get_db)):
+    results = (
+        db.query(
+            models.MMKill.uuid.label("uuid"),
+            models.MMPlayer.last_name.label("player_name"),
+            func.sum(models.MMKill.kills).label("total_kills")
+        )
+        .join(models.Boss, models.Boss.name == models.MMKill.mob)
+        .outerjoin(models.MMPlayer, models.MMPlayer.uuid == models.MMKill.uuid)
+        .filter(
+            models.Boss.is_active == True,
+            models.MMKill.kills > 0
+        )
+        .group_by(models.MMKill.uuid, models.MMPlayer.last_name)
+        .having(func.sum(models.MMKill.kills) > 0)
+        .order_by(desc("total_kills"), models.MMPlayer.last_name)
+        .all()
+    )
+
+    if not results:
+        return []
+
+    player_names = [row.player_name for row in results if row.player_name]
+    clan_map = {}
+
+    if player_names:
+        clan_rows = (
+            db.query(models.PlayerData.player_name, models.PlayerData.clan_name)
+            .filter(models.PlayerData.player_name.in_(player_names))
+            .all()
+        )
+        clan_map = {row.player_name: row.clan_name for row in clan_rows}
+
+    response = []
+    for idx, row in enumerate(results, start=1):
+        final_name = row.player_name or row.uuid
+        response.append({
+            "rank": idx,
+            "player_name": final_name,
+            "clan_name": clan_map.get(final_name),
+            "total_kills": int(row.total_kills or 0),
+        })
+
+    return response
+
+
+@app.get("/api/bosses/stats", response_model=list[schemas.BossStatItem])
+def get_bosses_stats(db: Session = Depends(database.get_db)):
+    total_rows = (
+        db.query(
+            models.Boss.name.label("mob_id"),
+            models.Boss.display_name.label("display_name"),
+            models.Boss.dungeon_name.label("dungeon_name"),
+            func.coalesce(func.sum(models.MMKill.kills), 0).label("total_kills")
+        )
+        .outerjoin(models.MMKill, models.MMKill.mob == models.Boss.name)
+        .filter(models.Boss.is_active == True)
+        .group_by(models.Boss.name, models.Boss.display_name, models.Boss.dungeon_name)
+        .all()
+    )
+
+    per_player_rows = (
+        db.query(
+            models.MMKill.mob.label("mob_id"),
+            models.MMKill.uuid.label("uuid"),
+            models.MMPlayer.last_name.label("player_name"),
+            func.sum(models.MMKill.kills).label("player_kills")
+        )
+        .join(models.Boss, models.Boss.name == models.MMKill.mob)
+        .outerjoin(models.MMPlayer, models.MMPlayer.uuid == models.MMKill.uuid)
+        .filter(
+            models.Boss.is_active == True,
+            models.MMKill.kills > 0
+        )
+        .group_by(models.MMKill.mob, models.MMKill.uuid, models.MMPlayer.last_name)
+        .order_by(models.MMKill.mob, desc("player_kills"), models.MMPlayer.last_name)
+        .all()
+    )
+
+    top_by_boss = {}
+    for row in per_player_rows:
+        if row.mob_id not in top_by_boss:
+            top_by_boss[row.mob_id] = {
+                "top_slayer_name": row.player_name or row.uuid,
+                "top_slayer_kills": int(row.player_kills or 0),
+            }
+
+    response = []
+    for row in total_rows:
+        top = top_by_boss.get(row.mob_id, {})
+        response.append({
+            "mob_id": row.mob_id,
+            "display_name": row.display_name,
+            "dungeon_name": row.dungeon_name,
+            "total_kills": int(row.total_kills or 0),
+            "top_slayer_name": top.get("top_slayer_name"),
+            "top_slayer_kills": top.get("top_slayer_kills", 0),
+        })
+
+    response.sort(key=lambda x: x["total_kills"], reverse=True)
     return response
 
 def verify_internal_token(x_internal_token: str = Header(None)):

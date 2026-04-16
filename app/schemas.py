@@ -145,3 +145,23 @@ class EconomyRankingItem(BaseModel):
 
     class Config:
         from_attributes = True
+
+class BossSlayerItem(BaseModel):
+    rank: int
+    player_name: str
+    clan_name: Optional[str] = None
+    total_kills: int
+
+    class Config:
+        from_attributes = True
+
+class BossStatItem(BaseModel):
+    mob_id: str
+    display_name: str
+    dungeon_name: Optional[str] = None
+    total_kills: int
+    top_slayer_name: Optional[str] = None
+    top_slayer_kills: int = 0
+
+    class Config:
+        from_attributes = True

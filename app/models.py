@@ -140,6 +140,8 @@ class Boss(Base):
     max_players = Column(Integer, default=1)
     dungeon_name = Column(String(100), nullable=True)
 
+    is_active = Column(Boolean, default=True)
+
     difficulties = relationship("BossDifficulty", back_populates="boss", cascade="all, delete-orphan")
     drops = relationship("BossDrop", back_populates="boss", cascade="all, delete-orphan")
 
@@ -273,3 +275,18 @@ class BannedPlayer(Base):
     ban_by = Column(String(36), nullable=False)
     ban_duration = Column(BigInteger, nullable=False)
     isActive = Column(Boolean, default=True)
+
+class MMPlayer(Base):
+    __tablename__ = "mm_players"
+    __table_args__ = {"schema": "mmkills"}
+
+    uuid = Column(String(36), primary_key=True)
+    last_name = Column(String(16), nullable=False)
+
+class MMKill(Base):
+    __tablename__ = "mm_kills"
+    __table_args__ = {"schema": "mmkills"}
+
+    uuid = Column(String(36), primary_key=True)
+    mob = Column(String(128), primary_key=True)
+    kills = Column(BigInteger, nullable=False, default=0)
