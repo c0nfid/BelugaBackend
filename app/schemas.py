@@ -137,6 +137,25 @@ class PvPRankingItem(BaseModel):
     class Config:
         from_attributes = True
 
+class MyBossKillItem(BaseModel):
+    mob_id: str
+    display_name: str
+    dungeon_name: Optional[str] = None
+    kills: int
+
+    class Config:
+        from_attributes = True
+
+
+class MyBossKillsResponse(BaseModel):
+    player_name: str
+    total_kills: int
+    rank: Optional[int] = None
+    bosses: list[MyBossKillItem]
+
+    class Config:
+        from_attributes = True
+        
 class EconomyRankingItem(BaseModel):
     rank: int
     player_name: str

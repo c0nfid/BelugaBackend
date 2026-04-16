@@ -741,7 +741,7 @@ def get_top_boss_slayers(db: Session = Depends(database.get_db)):
         response.append({
             "rank": idx,
             "player_name": final_name,
-            "clan_name": clan_map.get(final_name),
+            "clan_name": clan_map.get(final_name.lower()),
             "total_kills": int(row.total_kills or 0),
         })
 
@@ -812,6 +812,71 @@ def verify_internal_token(x_internal_token: str = Header(None)):
             status_code=403, 
             detail="Доступ запрещен. Неверный токен внутренней авторизации."
         )
+
+@app.get("/api/bosses/my-kills", response_model=schemas.MyBossKillsResponse)
+def get_my_boss_kills(
+    user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm),
+    db: Session = Depends(database.get_db)
+):
+    my_rows = (
+        db.query(
+            models.Boss.name.label("mob_id"),
+            models.Boss.display_name.label("display_name"),
+            models.Boss.dungeon_name.label("dungeon_name"),
+            func.coalesce(func.sum(models.MMKill.kills), 0).label("kills")
+        )
+        .outerjoin(
+            models.MMKill,
+            (models.MMKill.mob == models.Boss.name) & (models.MMKill.uuid == user.uuid)
+        )
+        .filter(models.Boss.is_active == True)
+        .group_by(models.Boss.name, models.Boss.display_name, models.Boss.dungeon_name)
+        .all()
+    )
+
+    bosses = []
+    total_kills = 0
+
+    for row in my_rows:
+        kills = int(row.kills or 0)
+        total_kills += kills
+
+        bosses.append({
+            "mob_id": row.mob_id,
+            "display_name": row.display_name,
+            "dungeon_name": row.dungeon_name,
+            "kills": kills,
+        })
+
+    bosses.sort(key=lambda x: x["kills"], reverse=True)
+
+    totals = (
+        db.query(
+            models.MMKill.uuid.label("uuid"),
+            func.sum(models.MMKill.kills).label("total_kills")
+        )
+        .join(models.Boss, models.Boss.name == models.MMKill.mob)
+        .filter(
+            models.Boss.is_active == True,
+            models.MMKill.kills > 0
+        )
+        .group_by(models.MMKill.uuid)
+        .order_by(desc("total_kills"), models.MMKill.uuid)
+        .all()
+    )
+
+    rank = None
+    for idx, row in enumerate(totals, start=1):
+        if row.uuid == user.uuid:
+            rank = idx
+            break
+
+    return {
+        "player_name": user.playername,
+        "total_kills": total_kills,
+        "rank": rank,
+        "bosses": bosses,
+    }
 
 @app.post("/api/internal/send-code", dependencies=[Depends(verify_internal_token)])
 async def internal_send_code(payload: schemas.InternalEmailSchema):
