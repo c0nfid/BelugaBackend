@@ -10,6 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.client.session.aiohttp import AiohttpSession
 
 from . import database, models, auth_utils
+from app.security_challenges import cleanup_recovery_challenges
 
 CODE_TTL = 300
 
@@ -26,6 +27,7 @@ async def cleanup_task():
             
             to_delete_confirm = [rid for rid, data in pending_confirmations.items() if now - data["created_at"] > CODE_TTL]
             for rid in to_delete_confirm: del pending_confirmations[rid]
+            cleanup_recovery_challenges()
         except Exception as e:
             print(f"Error in cleanup task: {e}") 
         await asyncio.sleep(60)
@@ -47,6 +49,9 @@ async def send_confirmation_request(bot: Bot, chat_id: int, action_type: str, da
     elif action_type == "change_password":
         text = "🔐 <b>Безопасность</b>\nПоступил запрос на смену пароля.\nПодтвердите смену."
         btn_text = "confirm_pass"
+    elif action_type == "reset_password":
+        text = "🔑 <b>Восстановление пароля</b>\nПоступил запрос на восстановление доступа к аккаунту.\nПодтвердите действие."
+        btn_text = "confirm_reset"
     else:
         text = "Подтвердите действие"
         btn_text = "confirm_generic"
@@ -107,6 +112,31 @@ async def register_handlers(dp: Dispatcher):
                     msg = "🔑 Пароль успешно изменен."
                 else:
                     msg = "❌ Ошибка: данные пароля не найдены."
+            elif action_code == "confirm_reset":
+                challenge_id = req["data"].get("challenge_id")
+                username = req["data"].get("username")
+
+                user = db.query(models.AuthTGUser).filter(
+                    models.AuthTGUser.playername == username,
+                    models.AuthTGUser.chatid == req["chat_id"]
+                ).first()
+
+                if not user:
+                    await callback.answer("Ошибка: Пользователь не найден", show_alert=True)
+                    return
+
+                try:
+                    from app.security_challenges import password_recovery_challenges
+                    challenge = password_recovery_challenges.get(challenge_id)
+
+                    if challenge and challenge["username"] == username:
+                        challenge["status"] = "approved"
+                        msg = "✅ Восстановление пароля подтверждено. Вернитесь на сайт и задайте новый пароль."
+                    else:
+                        msg = "❌ Сессия восстановления не найдена или истекла."
+                except Exception as e:
+                    print(f"Error confirming reset_password: {e}")
+                    msg = "❌ Ошибка при подтверждении восстановления."
 
         pending_confirmations[request_id]["status"] = "approved"
         await callback.message.edit_text(msg)

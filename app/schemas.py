@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 class LoginRequest(BaseModel):
     username: str
@@ -57,9 +57,18 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
+class SecurityMethodItem(BaseModel):
+    method: Literal["telegram", "email"]
+    label: str
+    masked_destination: Optional[str] = None
+
+class ChangePasswordOptionsResponse(BaseModel):
+    methods: List[SecurityMethodItem]
+
 class ChangePasswordRequest(BaseModel):
     new_password: str
     current_password: Optional[str] = None
+    method: Optional[Literal["telegram", "email"]] = None
 
 class ClanRankingItem(BaseModel):
     rank: int
@@ -184,3 +193,38 @@ class BossStatItem(BaseModel):
 
     class Config:
         from_attributes = True
+
+class RecoveryMethodItem(BaseModel):
+    method: Literal["telegram", "email"]
+    label: str
+    masked_destination: Optional[str] = None
+
+
+class RecoveryOptionsResponse(BaseModel):
+    status: str
+    username: str
+    methods: List[RecoveryMethodItem]
+
+
+class RecoveryStartRequest(BaseModel):
+    username: str
+    method: Literal["telegram", "email"]
+
+
+class RecoveryStartResponse(BaseModel):
+    status: str
+    method: Literal["telegram", "email"]
+    challenge_id: str
+    masked_destination: Optional[str] = None
+    request_id: Optional[str] = None
+    message: Optional[str] = None
+
+
+class RecoveryConfirmEmailRequest(BaseModel):
+    challenge_id: str
+    code: str
+
+
+class RecoveryResetRequest(BaseModel):
+    challenge_id: str
+    new_password: str

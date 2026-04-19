@@ -21,6 +21,9 @@ class AuthTGUser(Base):
     currentUUID = Column(Boolean, default=False)
     admin = Column(Boolean, default=False)
 
+    email = Column(String(255), nullable=True)
+    isVerifiedEmail = Column(Boolean, default=False)
+    
 class PlayerData(Base):
     __tablename__ = "player_data"
     
