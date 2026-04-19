@@ -118,16 +118,6 @@ class EnchantmentItem(Base):
     ench_name = Column(String(100), ForeignKey("belugadb.enchantments.name", ondelete="CASCADE"))
     item = Column(String(100), nullable=True)
 
-class UserEmail(Base):
-    __tablename__ = "user_emails"
-    __table_args__ = {'schema': 'belugadb'}
-
-    id = Column(Integer, primary_key=True, index=True)
-    nickname = Column(String(50), unique=True, index=True, nullable=False)
-    email = Column(String(255), unique=True, nullable=False)
-    is_verified = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
 class Boss(Base):
     __tablename__ = "bosses"
     __table_args__ = {"schema": "belugadb"}

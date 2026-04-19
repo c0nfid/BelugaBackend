@@ -8,7 +8,7 @@ import requests
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, status, Response, Cookie, Query, Header
+from fastapi import FastAPI, Depends, HTTPException, Response, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -16,13 +16,12 @@ from fastapi.openapi.utils import get_openapi
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, cast, Integer, or_
 
-from collections import defaultdict
-
 from app.security_challenges import password_recovery_challenges
 from . import models, schemas, database, auth_utils, bot_auth
 from routers import wiki, email_auth, shop
 
 models.Base.metadata.create_all(bind=database.engine)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -50,7 +49,11 @@ def get_current_username_docs(credentials: HTTPBasicCredentials = Depends(securi
     correct_user = secrets.compare_digest(credentials.username, os.getenv("SWAGGER_USER", "admin"))
     correct_password = secrets.compare_digest(credentials.password, os.getenv("SWAGGER_PASSWORD", "admin"))
     if not (correct_user and correct_password):
-        raise HTTPException(status_code=401, detail="Incorrect auth", headers={"WWW-Authenticate": "Basic"})
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect auth",
+            headers={"WWW-Authenticate": "Basic"}
+        )
     return credentials.username
 
 
@@ -81,6 +84,7 @@ def check_group_permission(db: Session, group_name: str, target_perm: str) -> bo
                 parent_group = perm[6:]
                 if parent_group not in visited:
                     queue.append(parent_group)
+
     return False
 
 
@@ -93,6 +97,7 @@ def mask_email(email: str) -> str:
         return local[:2] + "***@" + domain
     return "***@" + domain
 
+
 def mask_telegram_username(username: Optional[str]) -> str:
     if not username:
         return "Привязанный Telegram"
@@ -103,28 +108,22 @@ def mask_telegram_username(username: Optional[str]) -> str:
 
     return f"@{clean[:2]}***"
 
+
 def get_user_security_methods(db: Session, user: models.AuthTGUser) -> list[dict]:
     methods = []
 
     if user.activeTG and user.chatid:
-        tg_label = "Telegram"
-        tg_mask = f"@{user.username}" if user.username else "Привязанный Telegram"
         methods.append({
             "method": "telegram",
             "label": "Telegram",
             "masked_destination": mask_telegram_username(user.username),
         })
 
-    user_email = db.query(models.UserEmail).filter(
-        models.UserEmail.nickname == user.playername,
-        models.UserEmail.is_verified == True
-    ).first()
-
-    if user_email:
+    if user.email and user.isVerifiedEmail:
         methods.append({
             "method": "email",
             "label": "Email",
-            "masked_destination": mask_email(user_email.email),
+            "masked_destination": mask_email(user.email),
         })
 
     return methods
@@ -166,16 +165,22 @@ PH_PORT = os.getenv("PLACEHOLDER_API_PORT")
 
 
 @app.post("/api/login")
-async def login_with_password(creds: schemas.LoginRequest, response: Response, db: Session = Depends(database.get_db)):
-    user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == creds.username).first()
+async def login_with_password(
+    creds: schemas.LoginRequest,
+    response: Response,
+    db: Session = Depends(database.get_db)
+):
+    user = db.query(models.AuthTGUser).filter(
+        models.AuthTGUser.playername == creds.username
+    ).first()
+
     if not user:
         raise HTTPException(status_code=400, detail="Пользователь не найден")
+
     if not auth_utils.verify_password(creds.password, user.password):
         raise HTTPException(status_code=400, detail="Неверный логин или пароль")
 
-    user_email = db.query(models.UserEmail).filter(models.UserEmail.nickname == user.playername).first()
-
-    if user_email and user_email.is_verified:
+    if user.email and user.isVerifiedEmail:
         code = str(secrets.randbelow(900000) + 100000)
 
         login_email_codes[user.playername] = {
@@ -194,7 +199,7 @@ async def login_with_password(creds: schemas.LoginRequest, response: Response, d
         )
 
         try:
-            await send_email(user_email.email, f"Код для входа BelugaEmpire {code}", html)
+            await send_email(user.email, f"Код для входа BelugaEmpire {code}", html)
         except Exception as e:
             print(f"SMTP Error: {e}")
             raise HTTPException(status_code=500, detail="Ошибка при отправке письма с кодом")
@@ -202,18 +207,32 @@ async def login_with_password(creds: schemas.LoginRequest, response: Response, d
         return {
             "status": "confirmation_required",
             "method": "email",
-            "masked_email": mask_email(user_email.email),
+            "masked_email": mask_email(user.email),
             "message": "Требуется код из письма"
         }
 
     access_token = auth_utils.create_access_token(data={"sub": user.playername})
-    response.set_cookie(key="access_token", value=access_token, httponly=True, max_age=3600, samesite="lax", secure=False)
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        max_age=3600,
+        samesite="lax",
+        secure=False
+    )
     return {"status": "success", "message": "Login successful"}
 
 
 @app.post("/api/auth/confirm-login")
-def confirm_login(payload: schemas.EmailConfirmLoginSchema, response: Response, db: Session = Depends(database.get_db)):
-    user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == payload.username).first()
+def confirm_login(
+    payload: schemas.EmailConfirmLoginSchema,
+    response: Response,
+    db: Session = Depends(database.get_db)
+):
+    user = db.query(models.AuthTGUser).filter(
+        models.AuthTGUser.playername == payload.username
+    ).first()
+
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
 
@@ -226,7 +245,14 @@ def confirm_login(payload: schemas.EmailConfirmLoginSchema, response: Response, 
         raise HTTPException(status_code=400, detail="Неверный код")
 
     access_token = auth_utils.create_access_token(data={"sub": user.playername})
-    response.set_cookie(key="access_token", value=access_token, httponly=True, max_age=3600, samesite="lax", secure=False)
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        max_age=3600,
+        samesite="lax",
+        secure=False
+    )
 
     del login_email_codes[user.playername]
 
@@ -240,24 +266,36 @@ def logout(response: Response):
 
 
 @app.get("/api/me", response_model=schemas.UserResponse)
-def read_users_me(user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm), db: Session = Depends(database.get_db)):
-    player_data = db.query(models.PlayerData).filter(models.PlayerData.player_name == user.playername).first()
-    playtime_data = db.query(models.PlayerPlaytime).filter(models.PlayerPlaytime.player_name == user.playername).first()
+def read_users_me(
+    user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm),
+    db: Session = Depends(database.get_db)
+):
+    player_data = db.query(models.PlayerData).filter(
+        models.PlayerData.player_name == user.playername
+    ).first()
 
-    kda_data = db.query(models.KDAData).filter(models.KDAData.player_name == user.playername).first()
+    playtime_data = db.query(models.PlayerPlaytime).filter(
+        models.PlayerPlaytime.player_name == user.playername
+    ).first()
+
+    kda_data = db.query(models.KDAData).filter(
+        models.KDAData.player_name == user.playername
+    ).first()
 
     legit_stats = db.query(
         func.sum(models.PlayerPvpDaily.valid_kills).label("total_valid_kills"),
         func.sum(models.PlayerPvpDaily.valid_deaths).label("total_valid_deaths")
-    ).filter(models.PlayerPvpDaily.player_name == user.playername).first()
-
-    user_email_data = db.query(models.UserEmail).filter(models.UserEmail.nickname == user.playername).first()
+    ).filter(
+        models.PlayerPvpDaily.player_name == user.playername
+    ).first()
 
     current_time_ms = int(time.time() * 1000)
     login_ts = player_data.login_timestamp if (player_data and player_data.login_timestamp) else 0
     logout_ts = player_data.logout_timestamp if (player_data and player_data.logout_timestamp) else 0
 
-    fake_nick_data = db.query(models.FakeNick).filter(models.FakeNick.player_name == user.playername).first()
+    fake_nick_data = db.query(models.FakeNick).filter(
+        models.FakeNick.player_name == user.playername
+    ).first()
 
     active_ban = db.query(models.BannedPlayer).filter(
         models.BannedPlayer.player_name == user.playername,
@@ -313,8 +351,8 @@ def read_users_me(user: models.AuthTGUser = Depends(auth_utils.get_current_user_
         "last_ip": player_data.ip_address if (player_data and player_data.ip_address) else "Неизвестно",
         "session_duration": session_duration,
 
-        "email": user_email_data.email if user_email_data else None,
-        "is_email_verified": user_email_data.is_verified if user_email_data else False,
+        "email": user.email,
+        "is_email_verified": bool(user.isVerifiedEmail),
 
         "fake_player_name": fake_nick_data.fake_player_name if fake_nick_data else None,
         "can_edit_nickname": can_edit,
@@ -416,12 +454,7 @@ async def change_password(
             }
 
         if selected_method == "email":
-            user_email = db.query(models.UserEmail).filter(
-                models.UserEmail.nickname == user.playername,
-                models.UserEmail.is_verified == True
-            ).first()
-
-            if not user_email:
+            if not user.email or not user.isVerifiedEmail:
                 raise HTTPException(status_code=400, detail="Подтвержденная почта не найдена.")
 
             code = str(secrets.randbelow(900000) + 100000)
@@ -443,7 +476,7 @@ async def change_password(
             )
 
             try:
-                await send_email(user_email.email, "Смена пароля BelugaEmpire", html)
+                await send_email(user.email, "Смена пароля BelugaEmpire", html)
             except Exception as e:
                 print(f"SMTP Error: {e}")
                 raise HTTPException(status_code=500, detail="Ошибка при отправке письма")
@@ -451,7 +484,7 @@ async def change_password(
             return {
                 "status": "confirmation_required",
                 "method": "email",
-                "masked_email": mask_email(user_email.email)
+                "masked_email": mask_email(user.email)
             }
 
         raise HTTPException(status_code=400, detail="Неизвестный способ подтверждения.")
@@ -547,12 +580,7 @@ async def start_password_recovery(
     }
 
     if body.method == "email":
-        user_email = db.query(models.UserEmail).filter(
-            models.UserEmail.nickname == user.playername,
-            models.UserEmail.is_verified == True
-        ).first()
-
-        if not user_email:
+        if not user.email or not user.isVerifiedEmail:
             raise HTTPException(status_code=400, detail="Подтвержденная почта не найдена.")
 
         code = str(secrets.randbelow(900000) + 100000)
@@ -570,7 +598,7 @@ async def start_password_recovery(
 
         try:
             await send_email(
-                user_email.email,
+                user.email,
                 f"Восстановление пароля BelugaEmpire {code}",
                 html
             )
@@ -582,7 +610,7 @@ async def start_password_recovery(
             "status": "confirmation_required",
             "method": "email",
             "challenge_id": challenge_id,
-            "masked_destination": mask_email(user_email.email),
+            "masked_destination": mask_email(user.email),
             "message": "Код отправлен на почту",
         }
 
@@ -618,9 +646,7 @@ async def start_password_recovery(
 
 
 @app.post("/api/auth/recovery/confirm-email")
-async def confirm_recovery_email(
-    body: schemas.RecoveryConfirmEmailRequest
-):
+async def confirm_recovery_email(body: schemas.RecoveryConfirmEmailRequest):
     record = password_recovery_challenges.get(body.challenge_id)
 
     if not record or time.time() > record["expires_at"]:
@@ -699,11 +725,11 @@ def check_action_status(request_id: str):
     if request_id not in bot_auth.pending_confirmations:
         return {"status": "expired"}
 
-    status = bot_auth.pending_confirmations[request_id]["status"]
-    if status == "approved":
+    status_value = bot_auth.pending_confirmations[request_id]["status"]
+    if status_value == "approved":
         del bot_auth.pending_confirmations[request_id]
 
-    return {"status": status}
+    return {"status": status_value}
 
 
 @app.get("/api/auth/generate-link")
@@ -723,13 +749,23 @@ def check_tg_link(body: dict, response: Response, db: Session = Depends(database
     attempt = bot_auth.login_attempts[code]
     if attempt["status"] == "ready":
         playername = attempt.get("playername")
-        user = db.query(models.AuthTGUser).filter(models.AuthTGUser.playername == playername).first()
+        user = db.query(models.AuthTGUser).filter(
+            models.AuthTGUser.playername == playername
+        ).first()
+
         if not user:
             del bot_auth.login_attempts[code]
             raise HTTPException(status_code=404, detail="User not found")
 
         access_token = auth_utils.create_access_token(data={"sub": user.playername})
-        response.set_cookie(key="access_token", value=access_token, httponly=True, max_age=3600, samesite="lax", secure=False)
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            max_age=3600,
+            samesite="lax",
+            secure=False
+        )
         del bot_auth.login_attempts[code]
         return {"status": "success"}
 
@@ -737,9 +773,10 @@ def check_tg_link(body: dict, response: Response, db: Session = Depends(database
 
 
 @app.get("/api/clans/top", response_model=list[schemas.ClanRankingItem])
-def get_top_clans(all: bool = Query(False, description="Вернуть все кланы вместо ТОП-10"),
-                  db: Session = Depends(database.get_db)):
-
+def get_top_clans(
+    all: bool = Query(False, description="Вернуть все кланы вместо ТОП-10"),
+    db: Session = Depends(database.get_db)
+):
     rating_calc = cast(
         func.round(func.coalesce(models.ClanRating.final_rating, 0)),
         Integer
@@ -782,30 +819,43 @@ def get_top_clans(all: bool = Query(False, description="Вернуть все к
 
 @app.get("/api/clans/{clan_name}", response_model=schemas.ClanDetailsResponse)
 def get_clan_details(clan_name: str, db: Session = Depends(database.get_db)):
-    clan_data = db.query(models.ClanData).filter(models.ClanData.clan_name == clan_name).first()
+    clan_data = db.query(models.ClanData).filter(
+        models.ClanData.clan_name == clan_name
+    ).first()
+
     if not clan_data:
         raise HTTPException(status_code=404, detail="Клан не найден")
 
-    rating_row = db.query(models.ClanRating).filter(models.ClanRating.clan_name == clan_name).first()
+    rating_row = db.query(models.ClanRating).filter(
+        models.ClanRating.clan_name == clan_name
+    ).first()
+
     current_rating = int(rating_row.final_rating) if rating_row else 0
 
-    activity_row = db.query(models.ClanRating).filter(models.ClanRating.clan_name == clan_name).first()
+    activity_row = db.query(models.ClanRating).filter(
+        models.ClanRating.clan_name == clan_name
+    ).first()
+
     activity_points = activity_row.activity_score if activity_row else 0
 
     rank_position = db.query(models.ClanRating).filter(
         models.ClanRating.final_rating > (rating_row.final_rating if rating_row else 0)
     ).count() + 1
 
-    wins_count = db.query(models.ClanWars).filter(models.ClanWars.winner_clan == clan_name).count()
+    wins_count = db.query(models.ClanWars).filter(
+        models.ClanWars.winner_clan == clan_name
+    ).count()
 
     losses_count = db.query(models.ClanWars).filter(
         or_(models.ClanWars.clan_a == clan_name, models.ClanWars.clan_b == clan_name),
         models.ClanWars.winner_clan != clan_name
     ).count()
 
-    members_rows = db.query(models.ClanHeads).filter(models.ClanHeads.clan_name == clan_name).all()
-    members_list = []
+    members_rows = db.query(models.ClanHeads).filter(
+        models.ClanHeads.clan_name == clan_name
+    ).all()
 
+    members_list = []
     role_map = {0: "MEMBER", 1: "ADMIN", 2: "LEADER"}
 
     for m in members_rows:
@@ -863,9 +913,7 @@ def get_top_pvp(db: Session = Depends(database.get_db)):
     for idx, row in enumerate(results):
         kills = int(row.total_kills or 0)
         deaths = int(row.total_deaths or 0)
-
         kd_ratio = round(kills / (deaths if deaths > 0 else 1), 2)
-
         final_name = row.real_name if row.real_name else row.raw_name
 
         response.append({
@@ -1123,7 +1171,10 @@ def update_nickname(
     user: models.AuthTGUser = Depends(auth_utils.get_current_user_orm),
     db: Session = Depends(database.get_db)
 ):
-    player_data = db.query(models.PlayerData).filter(models.PlayerData.player_name == user.playername).first()
+    player_data = db.query(models.PlayerData).filter(
+        models.PlayerData.player_name == user.playername
+    ).first()
+
     group = player_data.primary_group if (player_data and player_data.primary_group) else "default"
 
     if not check_group_permission(db, group, "essentials.nick"):
@@ -1138,11 +1189,16 @@ def update_nickname(
         if not re.match(r"^[A-Za-z0-9_]+$", new_nick):
             raise HTTPException(status_code=400, detail="Разрешены только английские буквы, цифры и подчеркивание.")
 
-        existing = db.query(models.FakeNick).filter(models.FakeNick.fake_player_name == new_nick).first()
+        existing = db.query(models.FakeNick).filter(
+            models.FakeNick.fake_player_name == new_nick
+        ).first()
+
         if existing and existing.player_name != user.playername:
             raise HTTPException(status_code=400, detail="Этот псевдоним уже занят другим игроком.")
 
-    fake_record = db.query(models.FakeNick).filter(models.FakeNick.player_name == user.playername).first()
+    fake_record = db.query(models.FakeNick).filter(
+        models.FakeNick.player_name == user.playername
+    ).first()
 
     if not fake_record:
         fake_record = models.FakeNick(

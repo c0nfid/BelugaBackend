@@ -4,10 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AuthTGUser, UserEmail
+from app.models import AuthTGUser
 from app.schemas import EmailRequestSchema, EmailVerifySchema, EmailConfirmUnlinkSchema
 from app.auth_utils import get_current_user_orm
 from app.email_utils import send_email, get_email_template
+
 router = APIRouter(
     prefix="/api/email",
     tags=["Email Binding"]
@@ -16,17 +17,23 @@ router = APIRouter(
 email_verification_codes = {}
 email_unlink_codes = {}
 
+
 @router.post("/send-code")
 async def send_verification_code(
-    payload: EmailRequestSchema, 
+    payload: EmailRequestSchema,
     current_user: AuthTGUser = Depends(get_current_user_orm),
     db: Session = Depends(get_db)
 ):
-    email = payload.email
+    email = payload.email.strip().lower()
     playername = current_user.playername
 
-    existing_email = db.query(UserEmail).filter(UserEmail.email == email).first()
-    if existing_email and existing_email.nickname != playername:
+    existing_email_owner = db.query(AuthTGUser).filter(
+        AuthTGUser.email == email,
+        AuthTGUser.isVerifiedEmail == True,
+        AuthTGUser.playername != playername
+    ).first()
+
+    if existing_email_owner:
         raise HTTPException(status_code=400, detail="Эта почта уже привязана к другому аккаунту.")
 
     code = str(random.randint(100000, 999999))
@@ -46,23 +53,24 @@ async def send_verification_code(
 
     try:
         await send_email(email, f"Код подтверждения BelugaEmpire {code}", html)
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="Ошибка при отправке письма.")
 
     return {"message": "Код успешно отправлен"}
 
+
 @router.post("/verify")
 async def verify_email_code(
-    payload: EmailVerifySchema, 
+    payload: EmailVerifySchema,
     current_user: AuthTGUser = Depends(get_current_user_orm),
     db: Session = Depends(get_db)
 ):
-    email = payload.email
+    email = payload.email.strip().lower()
     code = payload.code
     playername = current_user.playername
 
     record = email_verification_codes.get(email)
-    
+
     if not record or time.time() > record["expires_at"]:
         raise HTTPException(status_code=400, detail="Код не найден или истек.")
     if record["playername"] != playername:
@@ -70,17 +78,17 @@ async def verify_email_code(
     if record["code"] != code:
         raise HTTPException(status_code=400, detail="Неверный код.")
 
-    user_email_db = db.query(UserEmail).filter(UserEmail.nickname == playername).first()
-    if user_email_db:
-        user_email_db.email = email
-        user_email_db.is_verified = True
-    else:
-        new_email = UserEmail(nickname=playername, email=email, is_verified=True)
-        db.add(new_email)
+    user = db.query(AuthTGUser).filter(AuthTGUser.playername == playername).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден.")
+
+    user.email = email
+    user.isVerifiedEmail = True
     db.commit()
 
     del email_verification_codes[email]
     return {"message": "Почта успешно привязана!"}
+
 
 @router.post("/request-unlink")
 async def request_unlink_email(
@@ -88,13 +96,16 @@ async def request_unlink_email(
     db: Session = Depends(get_db)
 ):
     playername = current_user.playername
-    user_email = db.query(UserEmail).filter(UserEmail.nickname == playername).first()
-    
-    if not user_email:
+    user = db.query(AuthTGUser).filter(AuthTGUser.playername == playername).first()
+
+    if not user or not user.email or not user.isVerifiedEmail:
         raise HTTPException(status_code=400, detail="Почта не привязана.")
-        
+
     code = str(random.randint(100000, 999999))
-    email_unlink_codes[playername] = {"code": code, "expires_at": time.time() + 300}
+    email_unlink_codes[playername] = {
+        "code": code,
+        "expires_at": time.time() + 300
+    }
 
     html = get_email_template(
         playername=playername,
@@ -105,11 +116,12 @@ async def request_unlink_email(
     )
 
     try:
-        await send_email(user_email.email, f"Отвязка почты BelugaEmpire {code}", html)
+        await send_email(user.email, f"Отвязка почты BelugaEmpire {code}", html)
     except Exception:
         raise HTTPException(status_code=500, detail="Ошибка при отправке письма.")
 
     return {"message": "Код отправлен."}
+
 
 @router.post("/confirm-unlink")
 async def confirm_unlink_email(
@@ -119,15 +131,16 @@ async def confirm_unlink_email(
 ):
     playername = current_user.playername
     record = email_unlink_codes.get(playername)
-    
+
     if not record or time.time() > record["expires_at"]:
         raise HTTPException(status_code=400, detail="Код не найден или истек.")
     if record["code"] != payload.code:
         raise HTTPException(status_code=400, detail="Неверный код.")
 
-    user_email = db.query(UserEmail).filter(UserEmail.nickname == playername).first()
-    if user_email:
-        db.delete(user_email)
+    user = db.query(AuthTGUser).filter(AuthTGUser.playername == playername).first()
+    if user:
+        user.email = None
+        user.isVerifiedEmail = False
         db.commit()
 
     del email_unlink_codes[playername]
